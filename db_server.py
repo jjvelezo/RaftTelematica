@@ -4,7 +4,7 @@ import service_pb2_grpc
 import grpc
 from concurrent import futures
 
-# Definir el nombre del archivo CSV
+# Definir el nombre del archivo CSV (Base de datos basica)
 DB_FILE = 'database.csv'
 
 class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
