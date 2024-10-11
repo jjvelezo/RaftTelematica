@@ -8,32 +8,28 @@ import time
 import random
 from threading import Thread
 
+# Archivo CSV para simular la base de datos
 DB_FILE = 'database.csv'
 
-# Estado inicial del nodo
+# Variables globales de estado
 ROLE = 'follower'
 CURRENT_TERM = 0
 VOTED_FOR = None
 LEADER_ID = None
-TIMEOUT = random.uniform(0.15, 0.3)
+TIMEOUT = random.uniform(0.15, 0.3)  # Timeout en segundos
 
-
+# Lista de nodos DB para conexión (debe ser ajustada con las IPs de cada instancia)
 OTHER_DB_NODES = ['10.0.2.162', '10.0.2.234']
 #OTHER_DB_NODES = ['10.0.2.250', '10.0.2.234']
 #OTHER_DB_NODES = ['10.0.2.250', '10.0.2.162']
 
 class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
-
     def ReadData(self, request, context):
-        global ROLE
         print(f"[{ROLE}] - Read operation requested")
-        
         with open(DB_FILE, mode='r') as csv_file:
             reader = csv.reader(csv_file)
             rows = [','.join(row) for row in reader]
             result = "\n".join(rows)
-        
-        print(f"[{ROLE}] - Read operation completed")
         return service_pb2.ReadResponse(result=result)
 
     def WriteData(self, request, context):
@@ -51,54 +47,53 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
                         print(f"[{ROLE}] - Write operation failed: ID already exists")
                         return service_pb2.WriteResponse(status="ERROR: ID ya existente")
 
-            # Si el ID no existe, agregar al CSV
             with open(DB_FILE, mode='a') as csv_file:
                 writer = csv.writer(csv_file)
                 writer.writerow(data)
-            
             print(f"[{ROLE}] - Write operation completed")
             return service_pb2.WriteResponse(status="SUCCESS")
         else:
-            print(f"[{ROLE}] - Write operation attempted on follower - Redirect to leader required")
             return service_pb2.WriteResponse(status="ERROR: Cannot write to follower")
 
     def RequestVote(self, request, context):
-        global CURRENT_TERM, VOTED_FOR
+        global CURRENT_TERM, VOTED_FOR, ROLE
         term = request.term
         candidate_id = request.candidate_id
 
-        # Votar si el término del candidato es mayor al actual y aún no ha votado en este término
-        if term > CURRENT_TERM or (term == CURRENT_TERM and VOTED_FOR is None):
-            VOTED_FOR = candidate_id
+        if term > CURRENT_TERM:
             CURRENT_TERM = term
+            VOTED_FOR = candidate_id
             print(f"[{ROLE}] - Voted for {candidate_id} in term {term}")
             return service_pb2.VoteResponse(granted=True)
+        elif term == CURRENT_TERM and (VOTED_FOR is None or VOTED_FOR == candidate_id):
+            VOTED_FOR = candidate_id
+            return service_pb2.VoteResponse(granted=True)
         
-        print(f"[{ROLE}] - Vote denied to {candidate_id} in term {term}")
         return service_pb2.VoteResponse(granted=False)
 
     def AppendEntries(self, request, context):
-        global ROLE, LEADER_ID, TIMEOUT
-        LEADER_ID = request.leader_id
-        TIMEOUT = random.uniform(0.15, 0.3) 
-        print(f"[{ROLE}] - Received heartbeat from leader {LEADER_ID}")
-        return service_pb2.AppendEntriesResponse(success=True)
+        global CURRENT_TERM, LEADER_ID, ROLE, TIMEOUT
+        if request.term >= CURRENT_TERM:
+            CURRENT_TERM = request.term
+            LEADER_ID = request.leader_id
+            ROLE = 'follower'
+            TIMEOUT = random.uniform(0.15, 0.3)
+            return service_pb2.AppendEntriesResponse(success=True)
+        return service_pb2.AppendEntriesResponse(success=False)
 
 def start_election():
     global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID
-
     while True:
         time.sleep(TIMEOUT)
 
-        if LEADER_ID is None:  
+        if LEADER_ID is None:
             print(f"[{ROLE}] - Timeout expired, starting election")
             ROLE = 'candidate'
             CURRENT_TERM += 1
-            VOTED_FOR = None
+            VOTED_FOR = 'self'
             LEADER_ID = None
 
-            # Pedir votos a los otros nodos y se vota el mismo
-            vote_count = 1 
+            vote_count = 1
             for node_ip in OTHER_DB_NODES:
                 try:
                     channel = grpc.insecure_channel(f'{node_ip}:50051')
@@ -110,9 +105,7 @@ def start_election():
                 except Exception as e:
                     print(f"[{ROLE}] - Error contacting node {node_ip}: {e}")
 
-            # Si consigue la mayoria de votos se convierte en lider
-            if vote_count > (len(OTHER_DB_NODES) + 1) // 2:
-                print(f"[{ROLE}] - Became leader for term {CURRENT_TERM}")
+            if vote_count > len(OTHER_DB_NODES) // 2:
                 ROLE = 'leader'
                 LEADER_ID = 'self'
                 start_heartbeats()
@@ -120,37 +113,28 @@ def start_election():
                 ROLE = 'follower'
 
 def start_heartbeats():
-    global LEADER_ID, ROLE, TIMEOUT
-
+    global ROLE, LEADER_ID, TIMEOUT
     while ROLE == 'leader':
-        print(f"[{ROLE}] - Sending heartbeats to followers")
         for node_ip in OTHER_DB_NODES:
             try:
                 channel = grpc.insecure_channel(f'{node_ip}:50051')
                 stub = service_pb2_grpc.DatabaseServiceStub(channel)
-                heartbeat_request = service_pb2.AppendEntriesRequest(leader_id='self')
-                stub.AppendEntries(heartbeat_request)
+                stub.AppendEntries(service_pb2.AppendEntriesRequest(leader_id='self', term=CURRENT_TERM))
             except Exception as e:
                 print(f"[{ROLE}] - Error sending heartbeat to node {node_ip}: {e}")
-        time.sleep(1)  # Enviar heartbeats cada 1 segundo
+        time.sleep(1)
 
 def serve():
-    # Reiniciar el estado del nodo al iniciar
-    global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID
-    ROLE = 'follower'
-    CURRENT_TERM = 0
-    VOTED_FOR = None
-    LEADER_ID = None
-
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     service_pb2_grpc.add_DatabaseServiceServicer_to_server(DatabaseService(), server)
     server.add_insecure_port('[::]:50051')
     server.start()
-    print(f"Database server ({ROLE}) started on port 50051.")
-    
     Thread(target=start_election).start()
-
     server.wait_for_termination()
 
 if __name__ == '__main__':
+    ROLE = 'follower'
+    CURRENT_TERM = 0
+    VOTED_FOR = None
+    LEADER_ID = None
     serve()
