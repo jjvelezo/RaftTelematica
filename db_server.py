@@ -10,17 +10,16 @@ from threading import Thread
 
 DB_FILE = 'database.csv'
 
-# Estado inicial del nodo
+
 ROLE = 'follower'
 CURRENT_TERM = 0
 VOTED_FOR = None
 LEADER_ID = None
-TIMEOUT = random.uniform(0.15, 0.3)
+TIMEOUT = random.uniform(1.5, 3.0) 
+LAST_HEARTBEAT = time.time()
 
 
 OTHER_DB_NODES = ['10.0.2.162', '10.0.2.234']
-#OTHER_DB_NODES = ['10.0.2.250', '10.0.2.234']
-#OTHER_DB_NODES = ['10.0.2.250', '10.0.2.162']
 
 class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
 
@@ -67,7 +66,7 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         term = request.term
         candidate_id = request.candidate_id
 
-        # Votar si el término del candidato es mayor al actual y aún no ha votado en este término
+        # Votar si el termino del candidato es mayor al actual y aun no ha votado en este termino
         if term > CURRENT_TERM or (term == CURRENT_TERM and VOTED_FOR is None):
             VOTED_FOR = candidate_id
             CURRENT_TERM = term
@@ -78,27 +77,29 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         return service_pb2.VoteResponse(granted=False)
 
     def AppendEntries(self, request, context):
-        global ROLE, LEADER_ID, TIMEOUT
+        global ROLE, LEADER_ID, TIMEOUT, LAST_HEARTBEAT
         LEADER_ID = request.leader_id
-        TIMEOUT = random.uniform(0.15, 0.3) 
+        LAST_HEARTBEAT = time.time()  # Actualizar el tiempo del ultimo heartbeat recibido
+        TIMEOUT = random.uniform(1.5, 3.0)  # Restablecer el timeout aleatorio
         print(f"[{ROLE}] - Received heartbeat from leader {LEADER_ID}")
         return service_pb2.AppendEntriesResponse(success=True)
 
 def start_election():
-    global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID
+    global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID, LAST_HEARTBEAT
 
     while True:
-        time.sleep(TIMEOUT)
+        time.sleep(0.1)  # El lider sigue activo?
 
-        if LEADER_ID is None:  
+        # Mirar si el tiempo desde el ultimo heartbeat supera el timeout
+        if ROLE == 'follower' and (time.time() - LAST_HEARTBEAT) > TIMEOUT:
             print(f"[{ROLE}] - Timeout expired, starting election")
             ROLE = 'candidate'
             CURRENT_TERM += 1
             VOTED_FOR = None
             LEADER_ID = None
 
-            # Pedir votos a los otros nodos y se vota el mismo
-            vote_count = 1 
+            # Pedir votos a los otros nodos y votarse a si mismo
+            vote_count = 1  
             for node_ip in OTHER_DB_NODES:
                 try:
                     channel = grpc.insecure_channel(f'{node_ip}:50051')
@@ -117,10 +118,12 @@ def start_election():
                 LEADER_ID = 'self'
                 start_heartbeats()
             else:
+                print(f"[{ROLE}] - Did not receive enough votes, remaining as follower")
                 ROLE = 'follower'
+                LAST_HEARTBEAT = time.time()
 
 def start_heartbeats():
-    global LEADER_ID, ROLE, TIMEOUT
+    global LEADER_ID, ROLE
 
     while ROLE == 'leader':
         print(f"[{ROLE}] - Sending heartbeats to followers")
@@ -132,10 +135,9 @@ def start_heartbeats():
                 stub.AppendEntries(heartbeat_request)
             except Exception as e:
                 print(f"[{ROLE}] - Error sending heartbeat to node {node_ip}: {e}")
-        time.sleep(1)  # Enviar heartbeats cada 1 segundo
+        time.sleep(1) 
 
 def serve():
-    # Reiniciar el estado del nodo al iniciar
     global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID
     ROLE = 'follower'
     CURRENT_TERM = 0
