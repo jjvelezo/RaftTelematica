@@ -81,7 +81,7 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
             try:
                 leader_stub = self.db_channels[self.current_leader]
                 # Llamamos al líder para que replique los datos al nuevo follower
-                leader_stub.ReplicateDataToFollower(service_pb2.ReplicateToFollowerRequest(follower_ip=new_follower_ip))
+                leader_stub.ReplicateToFollower(service_pb2.ReplicateToFollowerRequest(follower_ip=new_follower_ip))  # Corrección aquí
                 print(f"Líder {self.current_leader} notificado para replicar datos al nuevo follower {new_follower_ip}")
             except grpc.RpcError as e:
                 print(f"Error notificando al líder {self.current_leader}: {e}")
