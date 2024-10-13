@@ -163,36 +163,6 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         OTHER_DB_NODES = [ip for ip in active_nodes if ip != SERVER_IP]
         print(f"[{ROLE}] - Updated active node list: {OTHER_DB_NODES}")
         return service_pb2.UpdateResponse(status="SUCCESS")
-    
-    def ReplicateToFollower(self, request, context):
-        """Método que envía los datos actuales al nuevo follower"""
-        new_follower_ip = request.follower_ip
-        print(f"[{ROLE}] - Replicating data to new follower: {new_follower_ip}")
-        try:
-            # Leer el archivo CSV completo
-            with open(DB_FILE, mode='r') as csv_file:
-                reader = csv.reader(csv_file)
-                for row in reader:
-                    # Enviar cada fila del archivo CSV al nuevo follower
-                    self.replicate_to_single_follower(row, new_follower_ip)
-            return service_pb2.ReplicateResponse(status="SUCCESS")
-        except Exception as e:
-            print(f"[{ROLE}] - Error replicating to new follower {new_follower_ip}: {e}")
-            return service_pb2.ReplicateResponse(status=f"ERROR: {e}")
-
-    def replicate_to_single_follower(self, data, follower_ip):
-        """Replicar datos a un único follower"""
-        try:
-            channel = grpc.insecure_channel(f'{follower_ip}:50051')
-            stub = service_pb2_grpc.DatabaseServiceStub(channel)
-            replicate_request = service_pb2.WriteRequest(data=','.join(data))
-            response = stub.ReplicateData(replicate_request)
-            if response.status == "SUCCESS":
-                print(f"[{ROLE}] - Data successfully replicated to {follower_ip}")
-            else:
-                print(f"[{ROLE}] - Replication to {follower_ip} failed: {response.status}")
-        except Exception as e:
-            print(f"[{ROLE}] - Error replicating to {follower_ip}: {e}")
 
 def start_election():
     global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID, LAST_HEARTBEAT

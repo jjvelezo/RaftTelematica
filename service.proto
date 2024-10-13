@@ -1,4 +1,4 @@
-syntax = "proto3";
+service.proto: "syntax = "proto3";
 
 package database;
 
@@ -63,14 +63,6 @@ message UpdateResponse {
   string status = 1;
 }
 
-message ReplicateToFollowerRequest {
-  string follower_ip = 1;
-}
-
-message ReplicateResponse {
-  string status = 1;
-}
-
 // Servicio para la BD y Raft
 service DatabaseService {
   rpc ReadData(ReadRequest) returns (ReadResponse);
@@ -81,5 +73,4 @@ service DatabaseService {
   rpc UpdateActiveNodes(UpdateRequest) returns (UpdateResponse);
   rpc DegradeToFollower(DegradeRequest) returns (DegradeResponse);
   rpc ReplicateData(WriteRequest) returns (WriteResponse);
-  rpc ReplicateToFollower(ReplicateToFollowerRequest) returns (ReplicateResponse);
 }
