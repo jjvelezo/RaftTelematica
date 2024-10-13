@@ -12,12 +12,14 @@ import socket
 FIRST_RUN = True
 DB_FILE = 'database.csv'
 
+# Verificar si el archivo ya existe
 if os.path.exists(DB_FILE):
     print(f"El archivo '{DB_FILE}' ya existe. Se eliminará para crear uno nuevo.")
     os.remove(DB_FILE)
 else:
     print(f"El archivo '{DB_FILE}' no existe. Creando uno nuevo.")
 
+# Crear el archivo CSV
 with open(DB_FILE, mode='w', newline='') as file:
     writer = csv.writer(file)
     writer.writerow(['id', 'name', 'email'])
@@ -31,7 +33,7 @@ ROLE = 'follower'
 CURRENT_TERM = 0
 VOTED_FOR = None
 LEADER_ID = None
-TIMEOUT = random.uniform(1.5, 3.0) if FIRST_RUN else random.uniform(3.0, 5.0)
+TIMEOUT = random.uniform(1.5, 3) if FIRST_RUN else random.uniform(3.5, 5.0)
 LAST_HEARTBEAT = time.time()
 
 SERVER_IP = get_private_ip()
@@ -69,7 +71,7 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
                         print(f"[{ROLE}] - Write operation failed: ID already exists")
                         return service_pb2.WriteResponse(status="ERROR: ID ya existente")
 
-
+            # Si el ID no existe, agregar al CSV
             with open(DB_FILE, mode='a') as csv_file:
                 writer = csv.writer(csv_file)
                 writer.writerow(data)
@@ -147,41 +149,27 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         global ROLE
         return service_pb2.PingResponse(role=ROLE, state="active")
 
-    # Degradar un líder a follower
+    # Función para degradar a follower y replicar datos desde el líder
     def DegradeToFollower(self, request, context):
-        global ROLE
+        global ROLE, LEADER_ID
         print(f"[{ROLE}] - Degrading to follower by request.")
         ROLE = 'follower'
+
+        # Si se degrada, solicitar replicación de datos del líder
+        if LEADER_ID:
+            try:
+                channel = grpc.insecure_channel(f'{LEADER_ID}:50051')
+                stub = service_pb2_grpc.DatabaseServiceStub(channel)
+                replicate_request = service_pb2.WriteRequest(data='REPLICATE')  # Solicitar datos actuales
+                response = stub.ReplicateData(replicate_request)
+                if response.status == "SUCCESS":
+                    print(f"[{ROLE}] - Successfully replicated data from leader {LEADER_ID}")
+                else:
+                    print(f"[{ROLE}] - Replication from leader {LEADER_ID} failed: {response.status}")
+            except Exception as e:
+                print(f"[{ROLE}] - Error replicating data from leader {LEADER_ID}: {e}")
+
         return service_pb2.DegradeResponse(status="SUCCESS")
-
-    # Nueva función para enviar la base de datos a un follower cuando este la solicite
-    def RequestDatabase(self, request, context):
-        print(f"[{ROLE}] - Sending database to new follower")
-        with open(DB_FILE, mode='r') as csv_file:
-            rows = [','.join(row) for row in csv.reader(csv_file)]
-            database_content = "\n".join(rows)
-        return service_pb2.DatabaseResponse(database=database_content)
-
-    def UpdateActiveNodes(self, request, context):
-        global OTHER_DB_NODES
-        active_nodes = list(request.active_nodes)
-        OTHER_DB_NODES = [ip for ip in active_nodes if ip != SERVER_IP]
-        print(f"[{ROLE}] - Updated active node list: {OTHER_DB_NODES}")
-        return service_pb2.UpdateResponse(status="SUCCESS")
-
-# Nueva función para pedir la base de datos del líder
-def request_database_from_leader():
-    global LEADER_ID
-    if LEADER_ID is not None:
-        try:
-            channel = grpc.insecure_channel(f'{LEADER_ID}:50051')
-            stub = service_pb2_grpc.DatabaseServiceStub(channel)
-            response = stub.RequestDatabase(service_pb2.DatabaseRequest())
-            with open(DB_FILE, mode='w', newline='') as csv_file:
-                csv_file.write(response.database)
-            print(f"Database synchronized from leader {LEADER_ID}")
-        except grpc.RpcError as e:
-            print(f"Error requesting database from leader: {e}")
 
 def start_election():
     global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID, LAST_HEARTBEAT
@@ -217,8 +205,6 @@ def start_election():
                 print(f"[{ROLE}] - Did not receive enough votes, remaining as follower")
                 ROLE = 'follower'
                 LAST_HEARTBEAT = time.time()
-                # Pedir la base de datos al líder si hay uno
-                request_database_from_leader()
 
 def start_heartbeats():
     global LEADER_ID, ROLE
