@@ -81,29 +81,20 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
             print(f"Error contacting leader {ip} for degradation: {e}")
 
 
-        def send_active_list_to_all(self):
+    def send_active_list_to_all(self):
             active_instances = [ip for ip, status in self.server_status.items() if status["state"] == "active"]
 
             for ip, stub in self.db_channels.items():
                 if self.server_status[ip]["state"] == "active":
                     try:
-                        # Si el nodo acaba de pasar de 'inactive' a 'active'
-                        if self.server_status[ip]["state"] == "active" and self.server_status[ip]["previous_state"] == "inactive":
-                            # Verificar si el líder está activo
-                            if self.current_leader:
-                                leader_stub = self.db_channels[self.current_leader]
-                                request = service_pb2.WriteRequest(data="replicate")  # Datos a replicar (dependerá de tu implementación)
-                                leader_stub.ReplicateData(request)
-                                print(f"Replicando datos al nodo {ip} desde el líder {self.current_leader}")
-                        
-                        # Actualizar la lista activa de nodos
+                        # Actualiza la lista de nodos activos
                         request = service_pb2.UpdateRequest(active_nodes=active_instances)
                         stub.UpdateActiveNodes(request)
                         print(f"Sent active node list to {ip}: {active_instances}")
-
                     except grpc.RpcError as e:
                         print(f"Error sending active node list to {ip}: {e.details() if e.details() else 'Unknown error'}")
                         self.server_status[ip]["state"] = "inactive"
+
 
 
     def find_leader(self):
