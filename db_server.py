@@ -7,7 +7,7 @@ import os
 import time
 import random
 from threading import Thread
-import socket  # Para leer ip propia
+import socket  # Para leer IP propia
 
 # Verificar si es la primera vez que se inicia el follower
 FIRST_RUN = True  # Bandera para identificar el primer inicio
@@ -163,17 +163,13 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         global ROLE
         return service_pb2.PingResponse(role=ROLE, state="active")
 
-def UpdateActiveNodes(self, request, context):
-    global OTHER_DB_NODES
-    print(f"[{ROLE}] - Received active node list: {request.active_nodes}")
-
-    # Actualizar la lista de nodos activos
-    ACTIVE_DB_NODES = list(request.active_nodes)
-    OTHER_DB_NODES = [ip for ip in ACTIVE_DB_NODES if ip != SERVER_IP]
-    print(f"[{ROLE}] - Active node list was updated: {OTHER_DB_NODES}")
-
-    return service_pb2.UpdateResponse(status="SUCCESS")
-
+    # Implementación de UpdateActiveNodes
+    def UpdateActiveNodes(self, request, context):
+        global OTHER_DB_NODES
+        active_nodes = list(request.active_nodes)
+        OTHER_DB_NODES = [ip for ip in active_nodes if ip != SERVER_IP]  # Actualizar los nodos activos, excluyendo el propio
+        print(f"[{ROLE}] - Active nodes updated: {OTHER_DB_NODES}")
+        return service_pb2.UpdateResponse(status="SUCCESS")
 
 def start_election():
     global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID, LAST_HEARTBEAT
@@ -220,14 +216,12 @@ def start_heartbeats():
             try:
                 channel = grpc.insecure_channel(f'{node_ip}:50051')
                 stub = service_pb2_grpc.DatabaseServiceStub(channel)
-                # Enviar heartbeat junto con la identificación del líder
                 heartbeat_request = service_pb2.AppendEntriesRequest(leader_id='self')
                 response = stub.AppendEntries(heartbeat_request)
-                
-                # Comprobación de múltiples líderes
-                if response.success and response.leader_id != 'self':
-                    # Si otro líder es identificado, degradarse a follower
-                    print(f"[{ROLE}] - Another leader detected: {response.leader_id}. Switching to follower.")
+
+                # Verificar si el líder en el otro nodo es diferente (detectar colisión de líderes)
+                if response.leader_id != 'self':
+                    print(f"[{ROLE}] - Detected another leader ({response.leader_id}). Stepping down.")
                     ROLE = 'follower'
                     LEADER_ID = response.leader_id
                     return  # Salir de la función de heartbeat y volver a follower
