@@ -95,6 +95,7 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                     self.server_status[ip]["state"] = "inactive"
 
     def find_leader(self):
+        """Encuentra y asigna el líder actual."""
         for ip, status in self.server_status.items():
             if status["role"] == "leader" and status["state"] == "active":
                 self.current_leader = ip

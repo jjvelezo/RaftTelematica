@@ -74,3 +74,13 @@ service DatabaseService {
   rpc DegradeToFollower(DegradeRequest) returns (DegradeResponse);
   rpc ReplicateData(WriteRequest) returns (WriteResponse);
 }
+
+message SyncRequest {}
+
+message SyncResponse {
+  string database = 1;
+}
+
+service DatabaseService {
+  rpc SyncDatabase(SyncRequest) returns (SyncResponse);
+}

@@ -2,12 +2,12 @@ import service_pb2
 import service_pb2_grpc
 import grpc
 
-PROXY_HOST = '54.91.195.226'  #IP publica del proxy
+PROXY_HOST = '35.175.208.146'  #IP publica del proxy
 PROXY_PORT = '50052'
 
 def run():
     with grpc.insecure_channel(f'{PROXY_HOST}:{PROXY_PORT}') as channel:
-        
+
         stub = service_pb2_grpc.DatabaseServiceStub(channel)
         action = input("¿Quires hacer read o write? (read/write): ").strip().lower()
 
