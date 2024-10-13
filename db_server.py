@@ -70,12 +70,12 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
                         print(f"[{ROLE}] - Write operation failed: ID already exists")
                         return service_pb2.WriteResponse(status="ERROR: ID ya existente")
 
-            # Escribe en el archivo CSV del líder
+
             with open(DB_FILE, mode='a') as csv_file:
                 writer = csv.writer(csv_file)
                 writer.writerow(data)
             
-            print(f"[{ROLE}] - Write operation completed. Data: {data}")
+            print(f"[{ROLE}] - Write operation completed")
 
             # Replicar los datos a los seguidores
             self.replicate_to_followers(data)
@@ -85,48 +85,28 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
             print(f"[{ROLE}] - Write operation attempted on follower - Redirect to leader required")
             return service_pb2.WriteResponse(status="ERROR: Cannot write to follower")
 
-
     def ReplicateData(self, request, context):
-        global ROLE
         print(f"[{ROLE}] - Replication request received")
+        data = request.data.split(',')
+        print(f"[{ROLE}] - Data to replicate: {data}")
 
-        if request.data == "replicate_full":
-            try:
-                # Leer el archivo CSV completo y enviarlo al nodo
-                with open(DB_FILE, mode='r') as csv_file:
-                    reader = csv.reader(csv_file)
-                    rows = [','.join(row) for row in reader]
-                    full_data = "\n".join(rows)
-                    print(f"[{ROLE}] - Data to replicate: {full_data}")
-                
-                # Escribir los datos en el nodo de destino
-                with open(DB_FILE, mode='w', newline='') as csv_file:
-                    writer = csv.writer(csv_file)
-                    for row in rows:
-                        writer.writerow(row.split(','))
-
-                print(f"[{ROLE}] - Full replication completed successfully")
-                return service_pb2.WriteResponse(status="SUCCESS")
-            except Exception as e:
-                print(f"[{ROLE}] - Replication failed: {e}")
-                return service_pb2.WriteResponse(status=f"ERROR: {e}")
-        else:
-            print(f"[{ROLE}] - No full replication requested")
-            return service_pb2.WriteResponse(status="ERROR: No replication data provided")
-
-
+        try:
+            with open(DB_FILE, mode='a') as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow(data)
+            print(f"[{ROLE}] - Replication completed successfully")
+            return service_pb2.WriteResponse(status="SUCCESS")
+        except Exception as e:
+            print(f"[{ROLE}] - Replication failed: {e}")
+            return service_pb2.WriteResponse(status=f"ERROR: {e}")
 
     def replicate_to_followers(self, data):
-        global ROLE
-        print(f"[{ROLE}] - Initiating replication to followers")
-
         for follower_ip in OTHER_DB_NODES:
             try:
                 channel = grpc.insecure_channel(f'{follower_ip}:50051')
                 stub = service_pb2_grpc.DatabaseServiceStub(channel)
                 replicate_request = service_pb2.WriteRequest(data=','.join(data))
                 response = stub.ReplicateData(replicate_request)
-
                 if response.status == "SUCCESS":
                     print(f"[{ROLE}] - Data successfully replicated to {follower_ip}")
                 else:
