@@ -26,7 +26,7 @@ if _version_not_supported:
 
 
 class DatabaseServiceStub(object):
-    """Servicio para la base de datos y Raft
+    """Servicio para la BD y Raft
     """
 
     def __init__(self, channel):
@@ -75,10 +75,15 @@ class DatabaseServiceStub(object):
                 request_serializer=service__pb2.WriteRequest.SerializeToString,
                 response_deserializer=service__pb2.WriteResponse.FromString,
                 _registered_method=True)
+        self.ReplicateToFollower = channel.unary_unary(
+                '/database.DatabaseService/ReplicateToFollower',
+                request_serializer=service__pb2.ReplicateToFollowerRequest.SerializeToString,
+                response_deserializer=service__pb2.ReplicateResponse.FromString,
+                _registered_method=True)
 
 
 class DatabaseServiceServicer(object):
-    """Servicio para la base de datos y Raft
+    """Servicio para la BD y Raft
     """
 
     def ReadData(self, request, context):
@@ -129,6 +134,12 @@ class DatabaseServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ReplicateToFollower(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_DatabaseServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -172,6 +183,11 @@ def add_DatabaseServiceServicer_to_server(servicer, server):
                     request_deserializer=service__pb2.WriteRequest.FromString,
                     response_serializer=service__pb2.WriteResponse.SerializeToString,
             ),
+            'ReplicateToFollower': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReplicateToFollower,
+                    request_deserializer=service__pb2.ReplicateToFollowerRequest.FromString,
+                    response_serializer=service__pb2.ReplicateResponse.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'database.DatabaseService', rpc_method_handlers)
@@ -181,7 +197,7 @@ def add_DatabaseServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class DatabaseService(object):
-    """Servicio para la base de datos y Raft
+    """Servicio para la BD y Raft
     """
 
     @staticmethod
@@ -390,6 +406,33 @@ class DatabaseService(object):
             '/database.DatabaseService/ReplicateData',
             service__pb2.WriteRequest.SerializeToString,
             service__pb2.WriteResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReplicateToFollower(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/database.DatabaseService/ReplicateToFollower',
+            service__pb2.ReplicateToFollowerRequest.SerializeToString,
+            service__pb2.ReplicateResponse.FromString,
             options,
             channel_credentials,
             insecure,

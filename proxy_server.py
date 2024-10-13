@@ -34,8 +34,7 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                 for ip, stub in self.db_channels.items():
                     try:
                         response = stub.Ping(service_pb2.PingRequest(message="ping"))
-                        if self.server_status[ip]["state"] != "active" or self.server_status[ip]["role"] != response.role:
-                            print(f"Node {ip} is now active with role {response.role}")
+                        prev_state = self.server_status[ip]["state"]  # Guardamos el estado anterior
                         self.server_status[ip] = {"role": response.role, "state": response.state}
 
                         if response.role == "leader" and self.server_status[ip]["state"] == "active":
@@ -43,6 +42,11 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                             if self.current_leader != ip:
                                 self.current_leader = ip
                                 print(f"\nNew leader identified: {self.current_leader}")
+
+                        # Detectar cuando un nodo pasa de inactivo a activo
+                        if prev_state == "inactive" and self.server_status[ip]["state"] == "active":
+                            print(f"\nNew follower detected: {ip}. Notifying leader to replicate data.")
+                            self.notify_leader_of_new_follower(ip)
 
                     except grpc.RpcError as e:
                         if self.server_status[ip]["state"] != "inactive":
@@ -52,7 +56,7 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                                 print(f"Error contacting node {ip}: {e.details() if e.details() else 'Unknown error'}")
                             self.server_status[ip] = {"role": "unknown", "state": "inactive"}
 
-                # Si hay más de un lider, degradar a los otros
+                # Si hay más de un líder, degradar a los otros
                 if len(leaders) > 1:
                     print(f"\nMultiple leaders detected: {leaders}. Degrading extra leaders to followers.")
                     for ip in leaders:
@@ -70,6 +74,17 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
         ping_thread = threading.Thread(target=ping_servers)
         ping_thread.daemon = True
         ping_thread.start()
+
+    def notify_leader_of_new_follower(self, new_follower_ip):
+        """Notifica al líder para replicar los datos al nuevo follower."""
+        if self.current_leader:
+            try:
+                leader_stub = self.db_channels[self.current_leader]
+                # Llamamos al líder para que replique los datos al nuevo follower
+                leader_stub.ReplicateDataToFollower(service_pb2.ReplicateToFollowerRequest(follower_ip=new_follower_ip))
+                print(f"Líder {self.current_leader} notificado para replicar datos al nuevo follower {new_follower_ip}")
+            except grpc.RpcError as e:
+                print(f"Error notificando al líder {self.current_leader}: {e}")
 
 #Solicitud de lider a follower
     def degrade_to_follower(self, ip):
