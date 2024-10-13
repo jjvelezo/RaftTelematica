@@ -134,71 +134,35 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
         else:
             return service_pb2.WriteResponse(status="ERROR: No leader available for writing.")
         
-        # Enviar la lista de nodos activos al líder para que replique los datos a los nuevos followers
-    # Solicitud de replicación al líder para nuevos seguidores
-    def notify_leader_to_replicate(self, new_follower):
-        if self.current_leader is not None:
-            leader_stub = self.db_channels[self.current_leader]
+
+    def send_active_list_to_all(self):
+        active_instances = [ip for ip, status in self.server_status.items() if status["state"] == "active"]
+
+        new_nodes = []
+        for ip, stub in self.db_channels.items():
+            if self.server_status[ip]["state"] == "active" and self.server_status[ip]["role"] == "follower":
+                # Detectar si este follower estaba previamente inactivo y ahora está activo
+                if self.server_status[ip].get("was_inactive", False):
+                    new_nodes.append(ip)
+
+                # Actualizamos la bandera para marcar que ya no está inactivo
+                self.server_status[ip]["was_inactive"] = False
+
             try:
-                # Enviar solicitud de replicación al líder
-                print(f"Notifying leader {self.current_leader} to replicate data to new follower {new_follower}")
-                leader_stub.ReplicateData(service_pb2.WriteRequest(data=new_follower))  # Se replica a ese nuevo follower
+                # Enviar lista de instancias activas a todos los nodos activos
+                request = service_pb2.UpdateRequest(active_nodes=active_instances)
+                stub.UpdateActiveNodes(request)
+                print(f"Sent active node list to {ip}: {active_instances}")
             except grpc.RpcError as e:
-                print(f"Error notifying leader {self.current_leader} for replication: {e}")
+                print(f"Error sending active node list to {ip}: {e.details() if e.details() else 'Unknown error'}")
+                self.server_status[ip]["state"] = "inactive"
 
-    # Modificar el bucle de ping para incluir la detección de nuevos followers
-    def start_ping_loop(self):
-        def ping_servers():
-            known_followers = set()
-            while True:
-                leaders = []
-                followers = []
-                for ip, stub in self.db_channels.items():
-                    try:
-                        response = stub.Ping(service_pb2.PingRequest(message="ping"))
-                        if self.server_status[ip]["state"] != "active" or self.server_status[ip]["role"] != response.role:
-                            print(f"Node {ip} is now active with role {response.role}")
-                        self.server_status[ip] = {"role": response.role, "state": response.state}
-
-                        if response.role == "leader" and self.server_status[ip]["state"] == "active":
-                            leaders.append(ip)
-                            if self.current_leader != ip:
-                                self.current_leader = ip
-                                print(f"\nNew leader identified: {self.current_leader}")
-                        
-                        if response.role == "follower" and self.server_status[ip]["state"] == "active":
-                            followers.append(ip)
-
-                    except grpc.RpcError as e:
-                        if self.server_status[ip]["state"] != "inactive":
-                            print(f"Error contacting node {ip}: {e}")
-                        self.server_status[ip] = {"role": "unknown", "state": "inactive"}
-
-                # Detectar si hay nuevos followers conectados
-                new_followers = set(followers) - known_followers
-                if new_followers:
-                    for new_follower in new_followers:
-                        print(f"New follower detected: {new_follower}")
-                        self.notify_leader_to_replicate(new_follower)
-
-                known_followers = set(followers)
-
-                if len(leaders) > 1:
-                    print(f"\nMultiple leaders detected: {leaders}. Degrading extra leaders to followers.")
-                    for ip in leaders:
-                        if ip != self.current_leader:  
-                            self.degrade_to_follower(ip)
-
-                print("\nEstado actual de los servidores:")
-                for ip, status in self.server_status.items():
-                    print(f"Servidor {ip} - Rol: {status['role']}, Estado: {status['state']}")
-
-                self.send_active_list_to_all()
-                time.sleep(5)
-
-        ping_thread = threading.Thread(target=ping_servers)
-        ping_thread.daemon = True
-        ping_thread.start()
+        # Si hay un líder y se conectó un nuevo nodo, replicar datos
+        if new_nodes and self.current_leader:
+            try:
+                leader_stub = self.db_channels[self.current_leader]
+                for new_node in new_nodes:
+                    request = service_pb2.WriteRequest(data="REPLICATE")  # La estructura real dependerá de la implementación.
 
 
 
