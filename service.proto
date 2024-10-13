@@ -36,6 +36,7 @@ message AppendEntriesRequest {
 
 message AppendEntriesResponse {
   bool success = 1;
+  string leader_id = 2;  // ID del líder que envió el heartbeat
 }
 
 // Mensaje para el Ping

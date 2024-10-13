@@ -43,10 +43,10 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                         self.server_status[ip] = {"role": response.role, "state": response.state}
                     
                         # Si encontramos un nuevo líder, actualizar
-                        if response.role == "leader":
+                        if response.role == "leader" and self.server_status[ip]["state"] == "active":
                             if self.current_leader != ip:
                                 self.current_leader = ip
-                                print(f"\n New leader identified: {self.current_leader}")
+                                print(f"\nNew leader identified: {self.current_leader}")
                                 self.send_active_list_to_all()  # Enviar lista de nodos activos
 
                     except grpc.RpcError as e:
@@ -59,7 +59,7 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                             # Si falla el ping, marcar como inactivo
                             self.server_status[ip] = {"role": "unknown", "state": "inactive"}
                     
-                # Imprimir el estado actual de los servidores solo si hubo cambios
+                # Imprimir el estado actual de los servidores
                 print("\nEstado actual de los servidores:")
                 for ip, status in self.server_status.items():
                     print(f"Servidor {ip} - Rol: {status['role']}, Estado: {status['state']}")
@@ -75,17 +75,6 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
         ping_thread.daemon = True  # El hilo se cerrará cuando el programa principal termine
         ping_thread.start()
 
-    # def send_active_list_to_all(self):
-    #     """Envía la lista de instancias activas a todos los nodos."""
-    #     active_instances = [ip for ip, status in self.server_status.items() if status["state"] == "active"]
-        
-    #     for ip, stub in self.db_channels.items():
-    #         try:
-    #             stub.UpdateActiveInstances(service_pb2.UpdateRequest(active_instances=active_instances))
-    #             print(f"Active instances list sent to {ip}: {active_instances}")
-    #         except grpc.RpcError as e:
-    #             print(f"Failed to send active instances list to {ip}: {e}")
-    
     def send_active_list_to_all(self):
         """Envía la lista de instancias activas a todos los nodos activos."""
         active_instances = [ip for ip, status in self.server_status.items() if status["state"] == "active"]
@@ -116,14 +105,16 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
         self.current_leader = None
 
     def ReadData(self, request, context):
-        if self.current_leader is None:
-            self.find_leader()
-
+        # Seleccionar un follower aleatorio si hay un lider identificado
         followers = [ip for ip, status in self.server_status.items() if status["role"] == "follower" and status["state"] == "active"]
         if followers:
             follower_stub = random.choice([self.db_channels[ip] for ip in followers])
-            response = follower_stub.ReadData(request)
-            return response
+            try:
+                response = follower_stub.ReadData(request)
+                return response
+            except Exception as e:
+                print(f"Error reading data from follower: {e}")
+                return service_pb2.ReadResponse(result="ERROR: Unable to read data.")
         else:
             return service_pb2.ReadResponse(result="ERROR: No followers available.")
 
@@ -133,8 +124,14 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
 
         if self.current_leader:
             leader_stub = self.db_channels[self.current_leader]
-            response = leader_stub.WriteData(request)
-            return response
+            try:
+                response = leader_stub.WriteData(request)
+                return response
+            except grpc.RpcError as e:
+                print(f"Error writing data to leader: {e}")
+                # Si hay un error, se intenta encontrar un nuevo líder antes de responder.
+                self.find_leader()
+                return service_pb2.WriteResponse(status="ERROR: Unable to write data.")
         else:
             return service_pb2.WriteResponse(status="ERROR: No leader available for writing.")
 
