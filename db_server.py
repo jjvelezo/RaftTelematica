@@ -12,7 +12,6 @@ import socket
 FIRST_RUN = True
 DB_FILE = 'database.csv'
 
-
 if os.path.exists(DB_FILE):
     print(f"El archivo '{DB_FILE}' ya existe. Se eliminará para crear uno nuevo.")
     os.remove(DB_FILE)
@@ -114,6 +113,33 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
             except Exception as e:
                 print(f"[{ROLE}] - Error replicating to {follower_ip}: {e}")
 
+
+    def replicate_to_new_follower(self, follower_ip):
+        try:
+            with open(DB_FILE, mode='r') as csv_file:
+                data = csv_file.read()  # Leer todos los datos actuales
+            channel = grpc.insecure_channel(f'{follower_ip}:50051')
+            stub = service_pb2_grpc.DatabaseServiceStub(channel)
+            replicate_request = service_pb2.WriteRequest(data=data)
+            response = stub.ReplicateData(replicate_request)
+            if response.status == "SUCCESS":
+                print(f"[{ROLE}] - Data successfully replicated to new follower {follower_ip}")
+            else:
+                print(f"[{ROLE}] - Replication to {follower_ip} failed: {response.status}")
+        except Exception as e:
+            print(f"[{ROLE}] - Error replicating to new follower {follower_ip}: {e}")
+
+    # El líder replicará a los nuevos seguidores cuando reciba una solicitud de replicación
+    def ReplicateData(self, request, context):
+        global ROLE
+        if ROLE == 'leader':
+            for follower_ip in OTHER_DB_NODES:
+                self.replicate_to_new_follower(follower_ip)
+            return service_pb2.WriteResponse(status="SUCCESS")
+        else:
+            return service_pb2.WriteResponse(status="ERROR: Only leader can replicate data")
+
+
     def RequestVote(self, request, context):
         global CURRENT_TERM, VOTED_FOR
         term = request.term
@@ -140,7 +166,6 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         if FIRST_RUN:
             FIRST_RUN = False
             TIMEOUT = random.uniform(1.5, 3.0)
-            request_database_sync()
         
         print(f"[{ROLE}] - Received heartbeat from leader {LEADER_ID}")
         return service_pb2.AppendEntriesResponse(success=True)
@@ -148,130 +173,21 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
     def Ping(self, request, context):
         global ROLE
         return service_pb2.PingResponse(role=ROLE, state="active")
-    
-    def SyncDatabase(self, request, context):
-        global ROLE
-        if ROLE == 'leader':
-            print(f"[{ROLE}] - Sync request received from follower")
-            try:
-                with open(DB_FILE, mode='r') as csv_file:
-                    data = csv_file.read()  # Leer todo el archivo CSV
-                return service_pb2.SyncResponse(database=data)
-            except Exception as e:
-                print(f"[{ROLE}] - Error sending database: {e}")
-                return service_pb2.SyncResponse(database="")
-        else:
-            print(f"[{ROLE}] - Cannot sync database, not the leader.")
-            return service_pb2.SyncResponse(database="")
-        
 
-    def request_database_sync():
-        global LEADER_ID, ROLE
-        if ROLE == 'follower' and LEADER_ID:  # Solo si soy un follower y hay líder
-            print(f"[{ROLE}] - Requesting database sync from leader {LEADER_ID}")
-            try:
-                channel = grpc.insecure_channel(f'{LEADER_ID}:50051')
-                stub = service_pb2_grpc.DatabaseServiceStub(channel)
-                sync_request = service_pb2.SyncRequest()
-                response = stub.SyncDatabase(sync_request)
-                if response.database:
-                    with open(DB_FILE, mode='w') as csv_file:
-                        csv_file.write(response.database)
-                    print(f"[{ROLE}] - Database successfully synced from leader.")
-                else:
-                    print(f"[{ROLE}] - Failed to sync database from leader.")
-            except Exception as e:
-                print(f"[{ROLE}] - Error syncing database from leader: {e}")
-
-
-    def RequestDatabase(self, request, context):
-        """Método para que el líder envíe la base de datos completa"""
-        if ROLE == 'leader':
-            print(f"[{ROLE}] - Request for database received, sending database.")
-            with open(DB_FILE, mode='r') as csv_file:
-                reader = csv.reader(csv_file)
-                rows = [','.join(row) for row in reader]
-                database_data = "\n".join(rows)
-            return service_pb2.DatabaseResponse(database=database_data)
-        else:
-            return service_pb2.DatabaseResponse(database="ERROR: Not a leader")
-
-    def UpdateDatabase(self, request, context):
-        """Método para actualizar la base de datos local con datos del líder"""
-        print(f"[{ROLE}] - Updating local database with received data.")
-        try:
-            with open(DB_FILE, mode='w') as csv_file:
-                csv_file.write(request.database)
-            print(f"[{ROLE}] - Local database updated successfully.")
-            return service_pb2.UpdateResponse(status="SUCCESS")
-        except Exception as e:
-            print(f"[{ROLE}] - Error updating local database: {e}")
-            return service_pb2.UpdateResponse(status=f"ERROR: {e}")
-
-def request_database_from_leader():
-    """Función para que un follower solicite la base de datos al líder al conectarse."""
-    if ROLE == 'follower' and LEADER_ID:
-        try:
-            channel = grpc.insecure_channel(f'{LEADER_ID}:50051')
-            stub = service_pb2_grpc.DatabaseServiceStub(channel)
-            response = stub.RequestDatabase(service_pb2.DatabaseRequest())
-            if response.database != "ERROR: Not a leader":
-                print(f"[{ROLE}] - Database received from leader, updating local database.")
-                # Actualizar la base de datos local
-                stub.UpdateDatabase(service_pb2.DatabaseUpdateRequest(database=response.database))
-            else:
-                print(f"[{ROLE}] - Failed to retrieve database from leader.")
-        except grpc.RpcError as e:
-            print(f"[{ROLE}] - Error requesting database from leader: {e}")
-
-# Después de cada conexión a un líder, solicitar la base de datos
-def start_election():
-    global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID, LAST_HEARTBEAT
-
-    while True:
-        time.sleep(0.1)
-
-        if ROLE == 'follower' and (time.time() - LAST_HEARTBEAT) > TIMEOUT:
-            print(f"[{ROLE}] - Timeout expired, starting election")
-            ROLE = 'candidate'
-            CURRENT_TERM += 1
-            VOTED_FOR = None
-            LEADER_ID = None
-
-            vote_count = 1
-            for node_ip in OTHER_DB_NODES:
-                try:
-                    channel = grpc.insecure_channel(f'{node_ip}:50051')
-                    stub = service_pb2_grpc.DatabaseServiceStub(channel)
-                    vote_request = service_pb2.VoteRequest(term=CURRENT_TERM, candidate_id='self')
-                    vote_response = stub.RequestVote(vote_request)
-                    if vote_response.granted:
-                        vote_count += 1
-                except Exception as e:
-                    print(f"[{ROLE}] - Error contacting node {node_ip}")
-
-            if vote_count > (len(OTHER_DB_NODES) + 1) // 2:
-                print(f"[{ROLE}] - Became leader for term {CURRENT_TERM}")
-                ROLE = 'leader'
-                LEADER_ID = 'self'
-                start_heartbeats()
-            else:
-                print(f"[{ROLE}] - Did not receive enough votes, remaining as follower")
-                ROLE = 'follower'
-                LAST_HEARTBEAT = time.time()
-                # Solicitar la base de datos al líder cuando nos convertimos en follower
-                request_database_from_leader()
-
-
-
-#Degradar un líder a follower
-
+    # Degradar un líder a follower
     def DegradeToFollower(self, request, context):
-
         global ROLE
         print(f"[{ROLE}] - Degrading to follower by request.")
         ROLE = 'follower'
         return service_pb2.DegradeResponse(status="SUCCESS")
+
+    # Nueva función para enviar la base de datos a un follower cuando este la solicite
+    def RequestDatabase(self, request, context):
+        print(f"[{ROLE}] - Sending database to new follower")
+        with open(DB_FILE, mode='r') as csv_file:
+            rows = [','.join(row) for row in csv.reader(csv_file)]
+            database_content = "\n".join(rows)
+        return service_pb2.DatabaseResponse(database=database_content)
 
     def UpdateActiveNodes(self, request, context):
         global OTHER_DB_NODES
@@ -280,6 +196,20 @@ def start_election():
         print(f"[{ROLE}] - Updated active node list: {OTHER_DB_NODES}")
         return service_pb2.UpdateResponse(status="SUCCESS")
 
+# Nueva función para pedir la base de datos del líder
+def request_database_from_leader():
+    global LEADER_ID
+    if LEADER_ID is not None:
+        try:
+            channel = grpc.insecure_channel(f'{LEADER_ID}:50051')
+            stub = service_pb2_grpc.DatabaseServiceStub(channel)
+            response = stub.RequestDatabase(service_pb2.DatabaseRequest())
+            with open(DB_FILE, mode='w', newline='') as csv_file:
+                csv_file.write(response.database)
+            print(f"Database synchronized from leader {LEADER_ID}")
+        except grpc.RpcError as e:
+            print(f"Error requesting database from leader: {e}")
+
 def start_election():
     global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID, LAST_HEARTBEAT
 
@@ -314,6 +244,8 @@ def start_election():
                 print(f"[{ROLE}] - Did not receive enough votes, remaining as follower")
                 ROLE = 'follower'
                 LAST_HEARTBEAT = time.time()
+                # Pedir la base de datos al líder si hay uno
+                request_database_from_leader()
 
 def start_heartbeats():
     global LEADER_ID, ROLE

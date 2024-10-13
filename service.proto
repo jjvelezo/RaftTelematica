@@ -1,23 +1,6 @@
-// service.proto
-
 syntax = "proto3";
 
 package database;
-
-// Mensajes para la replicación de la base de datos
-message DatabaseRequest {}
-
-message DatabaseResponse {
-  string database = 1;  // Contenido de la base de datos en formato CSV
-}
-
-message DatabaseUpdateRequest {
-  string database = 1;  // Datos de la base de datos que se reciben
-}
-
-message UpdateResponse {
-  string status = 1;
-}
 
 // Mensajes para leer y escribir datos
 message ReadRequest {
@@ -90,8 +73,4 @@ service DatabaseService {
   rpc UpdateActiveNodes(UpdateRequest) returns (UpdateResponse);
   rpc DegradeToFollower(DegradeRequest) returns (DegradeResponse);
   rpc ReplicateData(WriteRequest) returns (WriteResponse);
-  
-  // Nuevos métodos
-  rpc RequestDatabase(DatabaseRequest) returns (DatabaseResponse);
-  rpc UpdateDatabase(DatabaseUpdateRequest) returns (UpdateResponse);
 }
