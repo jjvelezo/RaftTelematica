@@ -5,6 +5,7 @@ import grpc
 PROXY_HOST = '54.172.97.143'  #IP publica del proxy
 PROXY_PORT = '50052'
 
+
 def run():
     with grpc.insecure_channel(f'{PROXY_HOST}:{PROXY_PORT}') as channel:
 
