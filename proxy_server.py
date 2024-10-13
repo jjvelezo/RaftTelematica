@@ -163,7 +163,11 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                 leader_stub = self.db_channels[self.current_leader]
                 for new_node in new_nodes:
                     request = service_pb2.WriteRequest(data="REPLICATE")  # La estructura real dependerá de la implementación.
-
+                    # Aquí realizarías la replicación real
+                    leader_stub.ReplicateData(request)
+                    print(f"Replicated data to new follower {new_node}")
+            except grpc.RpcError as e:
+                print(f"Error replicating data to new follower: {e.details() if e.details() else 'Unknown error'}")
 
 
 
