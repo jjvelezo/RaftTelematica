@@ -116,8 +116,9 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
 
     def replicate_to_new_follower(self, follower_ip):
         try:
+            # Leer todos los datos actuales del CSV
             with open(DB_FILE, mode='r') as csv_file:
-                data = csv_file.read()  # Leer todos los datos actuales
+                data = csv_file.read()  # Obtener todos los datos de la base de datos actual
             channel = grpc.insecure_channel(f'{follower_ip}:50051')
             stub = service_pb2_grpc.DatabaseServiceStub(channel)
             replicate_request = service_pb2.WriteRequest(data=data)
@@ -128,6 +129,16 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
                 print(f"[{ROLE}] - Replication to {follower_ip} failed: {response.status}")
         except Exception as e:
             print(f"[{ROLE}] - Error replicating to new follower {follower_ip}: {e}")
+
+    # El líder replicará a los nuevos seguidores cuando reciba una solicitud de replicación desde el proxy
+    def ReplicateData(self, request, context):
+        global ROLE
+        if ROLE == 'leader':
+            follower_ip = request.data  # Obtener el IP del nuevo follower
+            self.replicate_to_new_follower(follower_ip)
+            return service_pb2.WriteResponse(status="SUCCESS")
+        else:
+            return service_pb2.WriteResponse(status="ERROR: Only leader can replicate data")
 
     # El líder replicará a los nuevos seguidores cuando reciba una solicitud de replicación
     def ReplicateData(self, request, context):

@@ -135,13 +135,14 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
             return service_pb2.WriteResponse(status="ERROR: No leader available for writing.")
         
         # Enviar la lista de nodos activos al líder para que replique los datos a los nuevos followers
-    def notify_leader_to_replicate(self):
+    # Solicitud de replicación al líder para nuevos seguidores
+    def notify_leader_to_replicate(self, new_follower):
         if self.current_leader is not None:
             leader_stub = self.db_channels[self.current_leader]
             try:
                 # Enviar solicitud de replicación al líder
-                print(f"Notifying leader {self.current_leader} to replicate data to new followers")
-                leader_stub.ReplicateData(service_pb2.WriteRequest(data="replicate"))
+                print(f"Notifying leader {self.current_leader} to replicate data to new follower {new_follower}")
+                leader_stub.ReplicateData(service_pb2.WriteRequest(data=new_follower))  # Se replica a ese nuevo follower
             except grpc.RpcError as e:
                 print(f"Error notifying leader {self.current_leader} for replication: {e}")
 
@@ -165,7 +166,6 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                                 self.current_leader = ip
                                 print(f"\nNew leader identified: {self.current_leader}")
                         
-                        # Identificar seguidores
                         if response.role == "follower" and self.server_status[ip]["state"] == "active":
                             followers.append(ip)
 
@@ -177,8 +177,9 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                 # Detectar si hay nuevos followers conectados
                 new_followers = set(followers) - known_followers
                 if new_followers:
-                    print(f"New followers detected: {new_followers}")
-                    self.notify_leader_to_replicate()
+                    for new_follower in new_followers:
+                        print(f"New follower detected: {new_follower}")
+                        self.notify_leader_to_replicate(new_follower)
 
                 known_followers = set(followers)
 
