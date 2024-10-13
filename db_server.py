@@ -122,7 +122,7 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         return service_pb2.UpdateResponse(status="SUCCESS")
 
     # Modificación en el método ReplicateData para manejar replicaciones completas
-        def ReplicateData(self, request, context):
+    def ReplicateData(self, request, context):
         print(f"[{ROLE}] - Replication request received")
         
         if request.data == "REPLICATE_ALL":  # Si el proxy solicita replicación completa
