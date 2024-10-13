@@ -19,7 +19,7 @@ message WriteResponse {
   string status = 1;
 }
 
-// Mensajes para el algoritmo Raft
+// Mensajes para el Algoritmo Raft
 message VoteRequest {
   int32 term = 1;
   string candidate_id = 2;
@@ -63,7 +63,7 @@ message UpdateResponse {
   string status = 1;
 }
 
-// Servicio para la base de datos y Raft
+// Servicio para la BD y Raft
 service DatabaseService {
   rpc ReadData(ReadRequest) returns (ReadResponse);
   rpc WriteData(WriteRequest) returns (WriteResponse);

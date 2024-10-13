@@ -12,7 +12,6 @@ DB_SERVERS = [
 ]
 
 class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
-
     def __init__(self):
         self.db_channels = {}
         for server in DB_SERVERS:
@@ -25,11 +24,10 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
         self.current_leader = None
         self.server_status = {server["host"]: {"role": "unknown", "state": "inactive"} for server in DB_SERVERS}
 
-        # Iniciar el ciclo de pings
+        # Iniciar el ciclo de Pings
         self.start_ping_loop()
 
     def start_ping_loop(self):
-        """Inicia un ciclo que realiza pings periódicos a los db_servers."""
         def ping_servers():
             while True:
                 leaders = []
@@ -54,11 +52,11 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                                 print(f"Error contacting node {ip}: {e.details() if e.details() else 'Unknown error'}")
                             self.server_status[ip] = {"role": "unknown", "state": "inactive"}
 
-                # Si hay más de un líder, degradar a los demás líderes
+                # Si hay más de un lider, degradar a los otros
                 if len(leaders) > 1:
                     print(f"\nMultiple leaders detected: {leaders}. Degrading extra leaders to followers.")
                     for ip in leaders:
-                        if ip != self.current_leader:  # Degradar los demás líderes
+                        if ip != self.current_leader:  
                             self.degrade_to_follower(ip)
 
                 # Imprimir el estado actual de los servidores
@@ -73,17 +71,17 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
         ping_thread.daemon = True
         ping_thread.start()
 
+#Solicitud de lider a follower
     def degrade_to_follower(self, ip):
-        """Solicitar que un líder se degrade a follower."""
         print(f"Degrading leader {ip} to follower.")
         try:
             stub = self.db_channels[ip]
-            stub.DegradeToFollower(service_pb2.DegradeRequest())  # Enviar solicitud de degradación
+            stub.DegradeToFollower(service_pb2.DegradeRequest())  # Enviar solicitud de degradacion
         except grpc.RpcError as e:
             print(f"Error contacting leader {ip} for degradation: {e}")
 
+
     def send_active_list_to_all(self):
-        """Envía la lista de instancias activas a todos los nodos activos."""
         active_instances = [ip for ip, status in self.server_status.items() if status["state"] == "active"]
 
         for ip, stub in self.db_channels.items():
@@ -97,13 +95,12 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                     self.server_status[ip]["state"] = "inactive"
 
     def find_leader(self):
-        """Encuentra y asigna el líder actual."""
         for ip, status in self.server_status.items():
             if status["role"] == "leader" and status["state"] == "active":
                 self.current_leader = ip
                 print(f"Líder encontrado: {self.current_leader}")
                 return
-
+            
         print("No se encontró líder activo.")
         self.current_leader = None
 

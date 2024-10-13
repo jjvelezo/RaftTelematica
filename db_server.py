@@ -7,12 +7,11 @@ import os
 import time
 import random
 from threading import Thread
-import socket  # Para leer ip propia
+import socket
 
-# Verificar si es la primera vez que se inicia el follower
 FIRST_RUN = True
-
 DB_FILE = 'database.csv'
+
 
 if os.path.exists(DB_FILE):
     print(f"El archivo '{DB_FILE}' ya existe. Se eliminará para crear uno nuevo.")
@@ -71,7 +70,7 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
                         print(f"[{ROLE}] - Write operation failed: ID already exists")
                         return service_pb2.WriteResponse(status="ERROR: ID ya existente")
 
-            # Si el ID no existe, agregar al CSV
+
             with open(DB_FILE, mode='a') as csv_file:
                 writer = csv.writer(csv_file)
                 writer.writerow(data)
@@ -149,15 +148,16 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         global ROLE
         return service_pb2.PingResponse(role=ROLE, state="active")
 
+#Degradar un líder a follower
+
     def DegradeToFollower(self, request, context):
-        """Función para degradar un líder a follower"""
+
         global ROLE
         print(f"[{ROLE}] - Degrading to follower by request.")
         ROLE = 'follower'
         return service_pb2.DegradeResponse(status="SUCCESS")
 
     def UpdateActiveNodes(self, request, context):
-        """Actualizar la lista de nodos activos desde el proxy."""
         global OTHER_DB_NODES
         active_nodes = list(request.active_nodes)
         OTHER_DB_NODES = [ip for ip in active_nodes if ip != SERVER_IP]
