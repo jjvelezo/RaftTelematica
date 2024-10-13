@@ -177,25 +177,9 @@ def start_election():
     while True:
         time.sleep(0.1)
 
-        # Verificar si ha llegado un heartbeat de un líder antes de iniciar la elección
+        # Verificar si el timeout ha vencido
         if ROLE == 'follower' and (time.time() - LAST_HEARTBEAT) > TIMEOUT:
             print(f"[{ROLE}] - Timeout expired, starting election")
-
-            # Confirmar si existe un líder en la red antes de lanzarse como candidato
-            for node_ip in OTHER_DB_NODES:
-                try:
-                    channel = grpc.insecure_channel(f'{node_ip}:50051')
-                    stub = service_pb2_grpc.DatabaseServiceStub(channel)
-                    response = stub.Ping(service_pb2.PingRequest(message="check_leader"))
-                    if response.role == 'leader':
-                        print(f"[{ROLE}] - Leader {node_ip} is active. Staying as follower.")
-                        LEADER_ID = node_ip
-                        LAST_HEARTBEAT = time.time()
-                        return  # Salir del bucle de elección
-                except Exception as e:
-                    print(f"[{ROLE}] - Error contacting node {node_ip}")
-
-            # Si no se detecta ningún líder, continuar con la elección
             ROLE = 'candidate'
             CURRENT_TERM += 1
             VOTED_FOR = None
@@ -224,7 +208,7 @@ def start_election():
                 LAST_HEARTBEAT = time.time()
 
 def start_heartbeats():
-    global LEADER_ID, ROLE
+    global LEADER_ID, ROLE, CURRENT_TERM
 
     while ROLE == 'leader':
         print(f"[{ROLE}] - Sending heartbeats to followers")
