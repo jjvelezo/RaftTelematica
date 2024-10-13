@@ -122,21 +122,28 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         return service_pb2.UpdateResponse(status="SUCCESS")
 
     # Modificación en el método ReplicateData para manejar replicaciones completas
-    def ReplicateData(self, request, context):
+        def ReplicateData(self, request, context):
         print(f"[{ROLE}] - Replication request received")
-        data = request.data.split('\n')  # Separa las líneas de datos para su inserción en el CSV
+        
+        if request.data == "REPLICATE_ALL":  # Si el proxy solicita replicación completa
+            with open(DB_FILE, mode='r') as csv_file:
+                rows = [','.join(row) for row in csv.reader(csv_file)]
+                data = "\n".join(rows)
+                print(f"[{ROLE}] - Sending full database for replication.")
+                return service_pb2.WriteResponse(status="SUCCESS", data=data)  # Enviar todo el CSV
 
+        data = request.data.split('\n')  # Si es una replicación de datos específicos
         try:
             with open(DB_FILE, mode='a') as csv_file:
                 writer = csv.writer(csv_file)
                 for row in data:
-                    writer.writerow(row.split(','))  # Escribir cada línea de datos en el archivo CSV
-
+                    writer.writerow(row.split(','))
             print(f"[{ROLE}] - Replication completed successfully")
             return service_pb2.WriteResponse(status="SUCCESS")
         except Exception as e:
             print(f"[{ROLE}] - Replication failed: {e}")
             return service_pb2.WriteResponse(status=f"ERROR: {e}")
+
 
 
 

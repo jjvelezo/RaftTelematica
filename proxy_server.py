@@ -24,8 +24,6 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
 
         self.current_leader = None
         self.server_status = {server["host"]: {"role": "unknown", "state": "inactive"} for server in DB_SERVERS}
-
-        # Iniciar el ciclo de Pings
         self.start_ping_loop()
 
     def start_ping_loop(self):
@@ -34,17 +32,11 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                 leaders = []
                 for ip, stub in self.db_channels.items():
                     try:
-                        # Ping para obtener el estado y rol del nodo
                         response = stub.Ping(service_pb2.PingRequest(message="ping"))
-                        
-                        # Verificar si el estado ha cambiado
                         if self.server_status[ip]["state"] != "active" or self.server_status[ip]["role"] != response.role:
                             print(f"Node {ip} is now active with role {response.role}")
-                        
-                        # Actualizar el estado y rol del nodo en el proxy
                         self.server_status[ip] = {"role": response.role, "state": response.state}
 
-                        # Si el nodo es líder y está activo, agregar a la lista de líderes
                         if response.role == "leader" and self.server_status[ip]["state"] == "active":
                             leaders.append(ip)
                             if self.current_leader != ip:
@@ -53,7 +45,6 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
 
                     except grpc.RpcError as e:
                         if self.server_status[ip]["state"] != "inactive":
-                            # Error al contactar con el nodo
                             if e.code() == grpc.StatusCode.UNAVAILABLE:
                                 print(f"Node {ip} is unavailable (Connection refused)")
                             else:
@@ -67,12 +58,10 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                         if ip != self.current_leader:  
                             self.degrade_to_follower(ip)
 
-                # Imprimir el estado actual de los servidores
                 print("\nEstado actual de los servidores:")
                 for ip, status in self.server_status.items():
                     print(f"Servidor {ip} - Rol: {status['role']}, Estado: {status['state']}")
 
-                # Enviar la lista de nodos activos a todos los nodos
                 self.send_active_list_to_all()
                 time.sleep(5)
 
@@ -81,7 +70,6 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
         ping_thread.start()
 
     def degrade_to_follower(self, ip):
-        """Degradar un líder adicional a seguidor"""
         print(f"Degrading leader {ip} to follower.")
         try:
             stub = self.db_channels[ip]
@@ -90,7 +78,6 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
             print(f"Error contacting leader {ip} for degradation: {e}")
 
     def send_active_list_to_all(self):
-        """Envía la lista de instancias activas a todos los nodos activos."""
         active_instances = [ip for ip, status in self.server_status.items() if status["state"] == "active"]
 
         for ip, stub in self.db_channels.items():
@@ -99,45 +86,27 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                     request = service_pb2.UpdateRequest(active_nodes=active_instances)
                     stub.UpdateActiveNodes(request)
                     print(f"Sent active node list to {ip}: {active_instances}")
-                    
-                    # Verificar si es un nodo recién activado (no el líder)
-                    if ip != self.current_leader:
-                        self.replicate_to_new_node(ip)  # Llamar a la replicación de datos para el nuevo nodo
-                    
+                    # Si hay un nuevo nodo activo y el rol del servidor es 'follower', solicitar replicación
+                    if self.server_status[ip]["role"] == "follower":
+                        print(f"Soliciting data replication from leader {self.current_leader} to new node {ip}")
+                        leader_stub = self.db_channels[self.current_leader]
+                        leader_stub.ReplicateData(service_pb2.WriteRequest(data="REPLICATE_ALL"))  # Solicita replicación completa
+
                 except grpc.RpcError as e:
                     print(f"Error sending active node list to {ip}: {e.details() if e.details() else 'Unknown error'}")
                     self.server_status[ip]["state"] = "inactive"
 
-    def replicate_to_new_node(self, new_node_ip):
-        """Solicita al líder que replique los datos al nuevo nodo activo."""
-        if self.current_leader:
-            leader_stub = self.db_channels[self.current_leader]
-            try:
-                # Enviar la solicitud de replicación de datos
-                print(f"Soliciting data replication from leader {self.current_leader} to new node {new_node_ip}")
-                replicate_request = service_pb2.WriteRequest(data="replicate")  # La data que necesites replicar
-                response = leader_stub.ReplicateData(replicate_request)
-                if response.status == "SUCCESS":
-                    print(f"Replication to new node {new_node_ip} was successful.")
-                else:
-                    print(f"Replication to new node {new_node_ip} failed: {response.status}")
-            except grpc.RpcError as e:
-                print(f"Error during data replication: {e}")
-
-
     def find_leader(self):
-        """Encuentra y asigna el líder actual."""
         for ip, status in self.server_status.items():
             if status["role"] == "leader" and status["state"] == "active":
                 self.current_leader = ip
                 print(f"Líder encontrado: {self.current_leader}")
                 return
-            
+
         print("No se encontró líder activo.")
         self.current_leader = None
 
     def ReadData(self, request, context):
-        """Leer datos de cualquier follower disponible."""
         followers = [ip for ip, status in self.server_status.items() if status["role"] == "follower" and status["state"] == "active"]
         if followers:
             follower_stub = random.choice([self.db_channels[ip] for ip in followers])
@@ -151,7 +120,6 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
             return service_pb2.ReadResponse(result="ERROR: No followers available.")
 
     def WriteData(self, request, context):
-        """Escribir datos en el líder."""
         if self.current_leader is None:
             self.find_leader()
 
@@ -162,7 +130,7 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                 return response
             except grpc.RpcError as e:
                 print(f"Error writing data to leader: {e}")
-                self.find_leader()  # Reintentar encontrar un nuevo líder
+                self.find_leader()
                 return service_pb2.WriteResponse(status="ERROR: Unable to write data.")
         else:
             return service_pb2.WriteResponse(status="ERROR: No leader available for writing.")
