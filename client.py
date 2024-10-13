@@ -2,7 +2,7 @@ import service_pb2
 import service_pb2_grpc
 import grpc
 
-PROXY_HOST = '54.166.230.82'  #IP pública del proxy
+PROXY_HOST = '54.91.195.226'  #IP pública del proxy
 PROXY_PORT = '50052'
 
 def run():
