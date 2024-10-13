@@ -100,11 +100,19 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
             print(f"[{ROLE}] - Replication failed: {e}")
             return service_pb2.WriteResponse(status=f"ERROR: {e}")
 
-    def replicate_to_followers(self, data):
+    def replicate_to_followers(self, data=None, replicate_all=False):
+        """Replica datos a todos los seguidores. Si replicate_all es True, replica todo el contenido de database.csv"""
         for follower_ip in OTHER_DB_NODES:
             try:
                 channel = grpc.insecure_channel(f'{follower_ip}:50051')
                 stub = service_pb2_grpc.DatabaseServiceStub(channel)
+
+                # Si replicate_all es True, replicar todo el archivo CSV
+                if replicate_all:
+                    with open(DB_FILE, mode='r') as csv_file:
+                        rows = [','.join(row) for row in csv.reader(csv_file)]
+                        data = "\n".join(rows)
+
                 replicate_request = service_pb2.WriteRequest(data=','.join(data))
                 response = stub.ReplicateData(replicate_request)
                 if response.status == "SUCCESS":
@@ -113,6 +121,21 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
                     print(f"[{ROLE}] - Replication to {follower_ip} failed: {response.status}")
             except Exception as e:
                 print(f"[{ROLE}] - Error replicating to {follower_ip}: {e}")
+
+    # Modificación para replicar cuando un nuevo nodo se conecta
+    def UpdateActiveNodes(self, request, context):
+        global OTHER_DB_NODES
+        active_nodes = list(request.active_nodes)
+        OTHER_DB_NODES = [ip for ip in active_nodes if ip != SERVER_IP]
+        print(f"[{ROLE}] - Updated active node list: {OTHER_DB_NODES}")
+
+        # Si el rol es 'leader', replicar todos los datos a los nuevos nodos activos
+        if ROLE == 'leader':
+            print(f"[{ROLE}] - Replicating data to new followers.")
+            self.replicate_to_followers(replicate_all=True)
+
+        return service_pb2.UpdateResponse(status="SUCCESS")
+
 
     def RequestVote(self, request, context):
         global CURRENT_TERM, VOTED_FOR

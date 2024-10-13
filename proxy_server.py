@@ -90,7 +90,7 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
             print(f"Error contacting leader {ip} for degradation: {e}")
 
     def send_active_list_to_all(self):
-        """Enviar la lista de instancias activas a todos los nodos activos."""
+        """Envía la lista de instancias activas a todos los nodos activos."""
         active_instances = [ip for ip, status in self.server_status.items() if status["state"] == "active"]
 
         for ip, stub in self.db_channels.items():
@@ -99,9 +99,31 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                     request = service_pb2.UpdateRequest(active_nodes=active_instances)
                     stub.UpdateActiveNodes(request)
                     print(f"Sent active node list to {ip}: {active_instances}")
+                    
+                    # Verificar si es un nodo recién activado (no el líder)
+                    if ip != self.current_leader:
+                        self.replicate_to_new_node(ip)  # Llamar a la replicación de datos para el nuevo nodo
+                    
                 except grpc.RpcError as e:
                     print(f"Error sending active node list to {ip}: {e.details() if e.details() else 'Unknown error'}")
                     self.server_status[ip]["state"] = "inactive"
+
+    def replicate_to_new_node(self, new_node_ip):
+        """Solicita al líder que replique los datos al nuevo nodo activo."""
+        if self.current_leader:
+            leader_stub = self.db_channels[self.current_leader]
+            try:
+                # Enviar la solicitud de replicación de datos
+                print(f"Soliciting data replication from leader {self.current_leader} to new node {new_node_ip}")
+                replicate_request = service_pb2.WriteRequest(data="replicate")  # La data que necesites replicar
+                response = leader_stub.ReplicateData(replicate_request)
+                if response.status == "SUCCESS":
+                    print(f"Replication to new node {new_node_ip} was successful.")
+                else:
+                    print(f"Replication to new node {new_node_ip} failed: {response.status}")
+            except grpc.RpcError as e:
+                print(f"Error during data replication: {e}")
+
 
     def find_leader(self):
         """Encuentra y asigna el líder actual."""
