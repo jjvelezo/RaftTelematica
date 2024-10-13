@@ -9,8 +9,6 @@ import random
 from threading import Thread
 import socket  # para leer ip propia
 
-"""El Contenido de db_server.py y db_server1test.py son el mismo solo que uno esta con algunos comentarios para facilitar lectura de terminal en pruebas :)"""
-
 DB_FILE = 'database.csv'
 
 # Verificar si el archivo ya existe
@@ -23,7 +21,6 @@ else:
 # Crear un nuevo archivo CSV con la estructura especificada
 with open(DB_FILE, mode='w', newline='') as file:
     writer = csv.writer(file)
-    # Escribir la cabecera (estructura)
     writer.writerow(['id', 'name', 'email'])
 
 print(f"Archivo '{DB_FILE}' creado con la estructura: id, name, email.")
@@ -36,24 +33,19 @@ ROLE = 'follower'
 CURRENT_TERM = 0
 VOTED_FOR = None
 LEADER_ID = None
-
-
-TIMEOUT_INITIAL = random.uniform(3.0, 5.0)  # Entre 3 y 5 segundos
+TIMEOUT_INITIAL = random.uniform(3.0, 5.0)  # Timeout inicial más largo
 TIMEOUT_NORMAL = random.uniform(1.5, 3.0)  # Timeout normal
-TIMEOUT = TIMEOUT_INITIAL  # Comenzamos con el timeout inicial
+TIMEOUT = TIMEOUT_INITIAL
 LAST_HEARTBEAT = time.time()
 
-# Establecer la IP del servidor
 SERVER_IP = get_private_ip()
 
-# Lista de nodos, incluyendo la IP del servidor
 ALL_DB_NODES = [
     '10.0.2.250',
     '10.0.2.162',
     '10.0.2.234'
 ]
 
-# Filtrar nodos que no sean la IP del servidor
 OTHER_DB_NODES = [ip for ip in ALL_DB_NODES if ip != SERVER_IP]
 print(OTHER_DB_NODES)
 
@@ -78,7 +70,6 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
             data = request.data.split(',')
             new_id = data[0]
 
-            # Verificar si el ID ya existe
             with open(DB_FILE, mode='r') as csv_file:
                 reader = csv.reader(csv_file)
                 for row in reader:
@@ -86,7 +77,6 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
                         print(f"[{ROLE}] - Write operation failed: ID already exists")
                         return service_pb2.WriteResponse(status="ERROR: ID ya existente")
 
-            # Si el ID no existe, agregar al CSV
             with open(DB_FILE, mode='a') as csv_file:
                 writer = csv.writer(csv_file)
                 writer.writerow(data)
@@ -136,7 +126,6 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         candidate_id = request.candidate_id
 
         try:
-            # Votar si el termino del candidato es mayor al actual y aun no ha votado en este termino
             if term > CURRENT_TERM or (term == CURRENT_TERM and VOTED_FOR is None):
                 VOTED_FOR = candidate_id
                 CURRENT_TERM = term
@@ -146,17 +135,20 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
             print(f"[{ROLE}] - Vote denied to {candidate_id} in term {term}")
             return service_pb2.VoteResponse(granted=False)
         except grpc.RpcError as e:
-            # Manejar el error de conexión y mostrar un mensaje simplificado
-            print(f"[{ROLE}] - Error al contactar candidato {candidate_id}: {e.code()}")
+            print(f"[{ROLE}] - Error contacting candidate {candidate_id}: {e.code()}")
             return service_pb2.VoteResponse(granted=False)
 
     def AppendEntries(self, request, context):
         global ROLE, LEADER_ID, TIMEOUT, LAST_HEARTBEAT
 
-        LEADER_ID = request.leader_id
-        LAST_HEARTBEAT = time.time()  # Actualizar el tiempo del ultimo heartbeat recibido
+        # Si un líder recibe un heartbeat de otro líder, debe pasar a ser follower
+        if ROLE == 'leader' and request.leader_id != LEADER_ID:
+            print(f"[{ROLE}] - Conflict detected! Another leader {request.leader_id} exists. Switching to follower.")
+            ROLE = 'follower'
 
-        # Si el timeout es el inicial, cambiar al timeout normal
+        LEADER_ID = request.leader_id
+        LAST_HEARTBEAT = time.time()
+
         if TIMEOUT == TIMEOUT_INITIAL:
             TIMEOUT = TIMEOUT_NORMAL
             print(f"[{ROLE}] - First heartbeat received, switching to normal timeout: {TIMEOUT} seconds")
@@ -166,16 +158,14 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
 
     def Ping(self, request, context):
         global ROLE
-        # Devolver el role (follower, leader, etc.) y el estado (activo)
         return service_pb2.PingResponse(role=ROLE, state="active")
 
 def start_election():
-    global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID, LAST_HEARTBEAT, TIMEOUT
+    global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID, LAST_HEARTBEAT
 
     while True:
-        time.sleep(0.1)  # El lider sigue activo?
+        time.sleep(0.1)
 
-        # Mirar si el tiempo desde el ultimo heartbeat supera el timeout
         if ROLE == 'follower' and (time.time() - LAST_HEARTBEAT) > TIMEOUT:
             print(f"[{ROLE}] - Timeout expired, starting election")
             ROLE = 'candidate'
@@ -183,7 +173,6 @@ def start_election():
             VOTED_FOR = None
             LEADER_ID = None
 
-            # Pedir votos a los otros nodos y votarse a si mismo
             vote_count = 1  
             for node_ip in OTHER_DB_NODES:
                 try:
@@ -196,7 +185,6 @@ def start_election():
                 except Exception as e:
                     print(f"[{ROLE}] - Error contacting node {node_ip}")
 
-            # Si consigue la mayoria de votos se convierte en lider
             if vote_count > (len(OTHER_DB_NODES) + 1) // 2:
                 print(f"[{ROLE}] - Became leader for term {CURRENT_TERM}")
                 ROLE = 'leader'
@@ -212,6 +200,7 @@ def start_heartbeats():
 
     while ROLE == 'leader':
         print(f"[{ROLE}] - Sending heartbeats to followers")
+        success = True  # Variable para rastrear si todos los beats son exitosos
         for node_ip in OTHER_DB_NODES:
             try:
                 channel = grpc.insecure_channel(f'{node_ip}:50051')
@@ -221,6 +210,7 @@ def start_heartbeats():
                 print(f"[{ROLE}] - Heartbeat successfully sent to node {node_ip}")
             except grpc.RpcError as e:
                 status_code = e.code()
+                success = False
                 if status_code == grpc.StatusCode.UNAVAILABLE:
                     print(f"[{ROLE}] - Node {node_ip} is unreachable (Status: UNAVAILABLE)")
                 elif status_code == grpc.StatusCode.CANCELLED:
@@ -228,6 +218,12 @@ def start_heartbeats():
                 else:
                     print(f"[{ROLE}] - Unexpected error sending heartbeat to node {node_ip}: {e}")
         
+        if not success:
+            print(f"[{ROLE}] - Lost contact with some nodes, switching to follower")
+            ROLE = 'follower'
+            LEADER_ID = None
+            break
+
         time.sleep(1)
 
 def serve():
