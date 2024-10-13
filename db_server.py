@@ -170,6 +170,20 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
                 print(f"[{ROLE}] - Error replicating data from leader {LEADER_ID}: {e}")
 
         return service_pb2.DegradeResponse(status="SUCCESS")
+    
+    def RequestDatabase(self, request, context):
+        print(f"[{ROLE}] - Sending database to new follower")
+        with open(DB_FILE, mode='r') as csv_file:
+            rows = [','.join(row) for row in csv.reader(csv_file)]
+            database_content = "\n".join(rows)
+        return service_pb2.DatabaseResponse(database=database_content)
+
+    def UpdateActiveNodes(self, request, context):
+        global OTHER_DB_NODES
+        active_nodes = list(request.active_nodes)
+        OTHER_DB_NODES = [ip for ip in active_nodes if ip != SERVER_IP]
+        print(f"[{ROLE}] - Updated active node list: {OTHER_DB_NODES}")
+        return service_pb2.UpdateResponse(status="SUCCESS")
 
 def start_election():
     global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID, LAST_HEARTBEAT
