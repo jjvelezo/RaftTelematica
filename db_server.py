@@ -37,7 +37,7 @@ CURRENT_TERM = 0
 VOTED_FOR = None
 LEADER_ID = None
 
-# Timeout más largo para la inicialización
+
 TIMEOUT_INITIAL = random.uniform(3.0, 5.0)  # Entre 3 y 5 segundos
 TIMEOUT_NORMAL = random.uniform(1.5, 3.0)  # Timeout normal
 TIMEOUT = TIMEOUT_INITIAL  # Comenzamos con el timeout inicial
@@ -151,14 +151,7 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
             return service_pb2.VoteResponse(granted=False)
 
     def AppendEntries(self, request, context):
-        global ROLE, LEADER_ID, TIMEOUT, LAST_HEARTBEAT, CURRENT_TERM
-
-        if ROLE == 'leader' and request.leader_id != 'self':
-            # Si soy líder y recibo un heartbeat de otro líder, me degrado a follower
-            print(f"[{ROLE}] - Another leader {request.leader_id} detected, stepping down to follower.")
-            ROLE = 'follower'
-            LEADER_ID = request.leader_id
-            CURRENT_TERM = max(CURRENT_TERM, request.term)  # Ajustar el término si es necesario
+        global ROLE, LEADER_ID, TIMEOUT, LAST_HEARTBEAT
 
         LEADER_ID = request.leader_id
         LAST_HEARTBEAT = time.time()  # Actualizar el tiempo del ultimo heartbeat recibido
