@@ -81,27 +81,30 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
             print(f"Error contacting leader {ip} for degradation: {e}")
 
 
-    def send_active_list_to_all(self):
-        active_instances = [ip for ip, status in self.server_status.items() if status["state"] == "active"]
+        def send_active_list_to_all(self):
+            active_instances = [ip for ip, status in self.server_status.items() if status["state"] == "active"]
 
-        for ip, stub in self.db_channels.items():
-            if self.server_status[ip]["state"] == "active":
-                try:
-                    # Enviar la lista de instancias activas a cada nodo
-                    request = service_pb2.UpdateRequest(active_nodes=active_instances)
-                    stub.UpdateActiveNodes(request)
-                    print(f"Sent active node list to {ip}: {active_instances}")
+            for ip, stub in self.db_channels.items():
+                if self.server_status[ip]["state"] == "active":
+                    try:
+                        # Si el nodo acaba de pasar de 'inactive' a 'active'
+                        if self.server_status[ip]["state"] == "active" and self.server_status[ip]["previous_state"] == "inactive":
+                            # Verificar si el líder está activo
+                            if self.current_leader:
+                                leader_stub = self.db_channels[self.current_leader]
+                                request = service_pb2.WriteRequest(data="replicate")  # Datos a replicar (dependerá de tu implementación)
+                                leader_stub.ReplicateData(request)
+                                print(f"Replicando datos al nodo {ip} desde el líder {self.current_leader}")
+                        
+                        # Actualizar la lista activa de nodos
+                        request = service_pb2.UpdateRequest(active_nodes=active_instances)
+                        stub.UpdateActiveNodes(request)
+                        print(f"Sent active node list to {ip}: {active_instances}")
 
-                    # Si es la primera vez que un nodo se vuelve "active", replicar los datos
-                    if self.server_status[ip].get("just_activated", False):
-                        print(f"Replicating data to newly activated node {ip}")
-                        self.replicate_data_to_new_node(ip)
+                    except grpc.RpcError as e:
+                        print(f"Error sending active node list to {ip}: {e.details() if e.details() else 'Unknown error'}")
+                        self.server_status[ip]["state"] = "inactive"
 
-                        # Marcar que ya no es "just_activated"
-                        self.server_status[ip]["just_activated"] = False
-                except grpc.RpcError as e:
-                    print(f"Error sending active node list to {ip}: {e.details() if e.details() else 'Unknown error'}")
-                    self.server_status[ip]["state"] = "inactive"
 
     def find_leader(self):
         """Encuentra y asigna el líder actual."""
@@ -142,41 +145,6 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                 return service_pb2.WriteResponse(status="ERROR: Unable to write data.")
         else:
             return service_pb2.WriteResponse(status="ERROR: No leader available for writing.")
-        
-    def replicate_data_to_new_node(self, new_node_ip):
-        if self.current_leader:
-            try:
-                # Abrir el canal gRPC con el líder
-                leader_stub = self.db_channels[self.current_leader]
-
-                # Pedir al líder que replique sus datos al nuevo nodo
-                print(f"Requesting leader {self.current_leader} to replicate data to {new_node_ip}")
-                request = service_pb2.WriteRequest(data="")
-                response = leader_stub.ReplicateData(request)
-
-                if response.status.startswith("ERROR"):
-                    print(f"Failed to replicate data to {new_node_ip}: {response.status}")
-                else:
-                    # Si la replicación es exitosa, escribir los datos en el nuevo nodo
-                    print(f"Replication data: {response.status}")
-                    self.write_data_to_follower(new_node_ip, response.status)  # Escribir los datos en el nuevo nodo
-            except grpc.RpcError as e:
-                print(f"Error contacting leader {self.current_leader} for data replication: {e.details()}")
-
-    def write_data_to_follower(self, new_node_ip, data):
-        try:
-            # Abrir el canal gRPC con el nuevo nodo
-            follower_stub = self.db_channels[new_node_ip]
-            write_request = service_pb2.WriteRequest(data=data)
-            response = follower_stub.WriteData(write_request)
-            if response.status == "SUCCESS":
-                print(f"Data successfully written to follower {new_node_ip}")
-            else:
-                print(f"Failed to write data to follower {new_node_ip}: {response.status}")
-        except grpc.RpcError as e:
-            print(f"Error writing data to follower {new_node_ip}: {e.details()}")
-
-
 
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
