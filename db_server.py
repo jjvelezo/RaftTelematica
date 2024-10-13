@@ -44,16 +44,19 @@ print(OTHER_DB_NODES)
 class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
 
     def ReadData(self, request, context):
-        global ROLE
-        print(f"[{ROLE}] - Read operation requested")
-        
-        with open(DB_FILE, mode='r') as csv_file:
-            reader = csv.reader(csv_file)
-            rows = [','.join(row) for row in reader]
-            result = "\n".join(rows)
-        
-        print(f"[{ROLE}] - Read operation completed")
-        return service_pb2.ReadResponse(result=result)
+        followers = [ip for ip, status in self.server_status.items() if status["role"] == "follower" and status["state"] == "active"]
+        if followers:
+            follower_stub = random.choice([self.db_channels[ip] for ip in followers])
+            try:
+                response = follower_stub.ReadData(request)
+                return response
+            except Exception as e:
+                print(f"Error reading data from follower: {e}")
+                return service_pb2.ReadResponse(result="ERROR: Unable to read data.")
+        else:
+            print("No followers available")
+            return service_pb2.ReadResponse(result="ERROR: No followers available.")
+
 
     def WriteData(self, request, context):
         global ROLE
