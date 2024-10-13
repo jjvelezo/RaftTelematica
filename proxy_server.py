@@ -133,43 +133,6 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                 return service_pb2.WriteResponse(status="ERROR: Unable to write data.")
         else:
             return service_pb2.WriteResponse(status="ERROR: No leader available for writing.")
-        
-
-    def send_active_list_to_all(self):
-        active_instances = [ip for ip, status in self.server_status.items() if status["state"] == "active"]
-
-        new_nodes = []
-        for ip, stub in self.db_channels.items():
-            if self.server_status[ip]["state"] == "active" and self.server_status[ip]["role"] == "follower":
-                # Detectar si este follower estaba previamente inactivo y ahora está activo
-                if self.server_status[ip].get("was_inactive", False):
-                    new_nodes.append(ip)
-
-                # Actualizamos la bandera para marcar que ya no está inactivo
-                self.server_status[ip]["was_inactive"] = False
-
-            try:
-                # Enviar lista de instancias activas a todos los nodos activos
-                request = service_pb2.UpdateRequest(active_nodes=active_instances)
-                stub.UpdateActiveNodes(request)
-                print(f"Sent active node list to {ip}: {active_instances}")
-            except grpc.RpcError as e:
-                print(f"Error sending active node list to {ip}: {e.details() if e.details() else 'Unknown error'}")
-                self.server_status[ip]["state"] = "inactive"
-
-        # Si hay un líder y se conectó un nuevo nodo, replicar datos
-        if new_nodes and self.current_leader:
-            try:
-                leader_stub = self.db_channels[self.current_leader]
-                for new_node in new_nodes:
-                    request = service_pb2.WriteRequest(data="REPLICATE")  # La estructura real dependerá de la implementación.
-                    # Aquí realizarías la replicación real
-                    leader_stub.ReplicateData(request)
-                    print(f"Replicated data to new follower {new_node}")
-            except grpc.RpcError as e:
-                print(f"Error replicating data to new follower: {e.details() if e.details() else 'Unknown error'}")
-
-
 
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
