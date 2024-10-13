@@ -7,7 +7,7 @@ import os
 import time
 import random
 from threading import Thread
-import socket # para leer ip propia
+import socket  # para leer ip propia
 
 """El Contenido de db_server.py y db_server1test.py son el mismo solo que uno esta con algunos comentarios para facilitar lectura de terminal en pruebas :)"""
 
@@ -36,10 +36,13 @@ ROLE = 'follower'
 CURRENT_TERM = 0
 VOTED_FOR = None
 LEADER_ID = None
-TIMEOUT = random.uniform(1.5, 3.0)
+
+
+TIMEOUT_INITIAL = random.uniform(3.0, 5.0)  # Entre 3 y 5 segundos
+TIMEOUT_NORMAL = random.uniform(1.5, 3.0)  # Timeout normal
+TIMEOUT = TIMEOUT_INITIAL  # Comenzamos con el timeout inicial
 LAST_HEARTBEAT = time.time()
 
-#OTHER_DB_NODES = ['10.0.2.100', '10.0.2.164'] #Example
 # Establecer la IP del servidor
 SERVER_IP = get_private_ip()
 
@@ -53,7 +56,6 @@ ALL_DB_NODES = [
 # Filtrar nodos que no sean la IP del servidor
 OTHER_DB_NODES = [ip for ip in ALL_DB_NODES if ip != SERVER_IP]
 print(OTHER_DB_NODES)
-
 
 class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
 
@@ -127,7 +129,7 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
                     print(f"[{ROLE}] - Replication to {follower_ip} failed: {response.status}")
             except Exception as e:
                 print(f"[{ROLE}] - Error replicating to {follower_ip}: {e}")
-    
+
     def RequestVote(self, request, context):
         global CURRENT_TERM, VOTED_FOR
         term = request.term
@@ -150,48 +152,25 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
 
     def AppendEntries(self, request, context):
         global ROLE, LEADER_ID, TIMEOUT, LAST_HEARTBEAT
+
         LEADER_ID = request.leader_id
         LAST_HEARTBEAT = time.time()  # Actualizar el tiempo del ultimo heartbeat recibido
-        TIMEOUT = random.uniform(1.5, 3.0)  # Restablecer el timeout aleatorio
-        #print
+
+        # Si el timeout es el inicial, cambiar al timeout normal
+        if TIMEOUT == TIMEOUT_INITIAL:
+            TIMEOUT = TIMEOUT_NORMAL
+            print(f"[{ROLE}] - First heartbeat received, switching to normal timeout: {TIMEOUT} seconds")
+
         print(f"[{ROLE}] - Received heartbeat from leader {LEADER_ID}")
         return service_pb2.AppendEntriesResponse(success=True)
-    
+
     def Ping(self, request, context):
         global ROLE
         # Devolver el role (follower, leader, etc.) y el estado (activo)
         return service_pb2.PingResponse(role=ROLE, state="active")
-    
-    # Metodods para hablar con el Proxy-------------------------------------------------
-    
-    def UpdateActiveNodes(self, request, context):
-        global OTHER_DB_NODES
-        print(f"[{ROLE}] - Received active node list: {request.active_nodes}")
-
-        # Actualizar la lista de nodos activos
-        ACTIVE_DB_NODES = list(request.active_nodes)
-        OTHER_DB_NODES = [ip for ip in ACTIVE_DB_NODES if ip != SERVER_IP]
-        print(f"[{ROLE}] - Active node list was updated: {OTHER_DB_NODES}")
-
-        return service_pb2.UpdateResponse(status="SUCCESS")
-    
-    def request_active_nodes_from_proxy(proxy_ip):
-        try:
-            channel = grpc.insecure_channel(f'{proxy_ip}:50051')  # Conectar al proxy
-            stub = service_pb2_grpc.DatabaseServiceStub(channel)
-            request = service_pb2.PingRequest()  # O algún otro tipo de request que tu proxy pueda manejar
-            response = stub.Ping(request)  # O el método que maneje el proxy para enviar nodos activos
-            print(f"Received active nodes from proxy: {response.active_nodes}")
-            ACTIVE_DB_NODES = list(response.active_nodes)  # Convertirlo a lista
-            OTHER_DB_NODES = [ip for ip in ACTIVE_DB_NODES if ip != SERVER_IP]
-            return OTHER_DB_NODES 
-        except Exception as e:
-            print(f"Error fetching active nodes from proxy: {e}")
-            return []
-        
 
 def start_election():
-    global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID, LAST_HEARTBEAT
+    global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID, LAST_HEARTBEAT, TIMEOUT
 
     while True:
         time.sleep(0.1)  # El lider sigue activo?
@@ -215,7 +194,6 @@ def start_election():
                     if vote_response.granted:
                         vote_count += 1
                 except Exception as e:
-                    #print(f"[{ROLE}] - Error contacting node {node_ip}: {e}")
                     print(f"[{ROLE}] - Error contacting node {node_ip}")
 
             # Si consigue la mayoria de votos se convierte en lider
@@ -233,7 +211,6 @@ def start_heartbeats():
     global LEADER_ID, ROLE
 
     while ROLE == 'leader':
-        #print
         print(f"[{ROLE}] - Sending heartbeats to followers")
         for node_ip in OTHER_DB_NODES:
             try:
@@ -241,7 +218,6 @@ def start_heartbeats():
                 stub = service_pb2_grpc.DatabaseServiceStub(channel)
                 heartbeat_request = service_pb2.AppendEntriesRequest(leader_id='self')
                 stub.AppendEntries(heartbeat_request)
-                #print
                 print(f"[{ROLE}] - Heartbeat successfully sent to node {node_ip}")
             except grpc.RpcError as e:
                 status_code = e.code()
