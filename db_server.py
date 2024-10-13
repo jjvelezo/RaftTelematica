@@ -163,6 +163,18 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         global ROLE
         return service_pb2.PingResponse(role=ROLE, state="active")
 
+def UpdateActiveNodes(self, request, context):
+    global OTHER_DB_NODES
+    print(f"[{ROLE}] - Received active node list: {request.active_nodes}")
+
+    # Actualizar la lista de nodos activos
+    ACTIVE_DB_NODES = list(request.active_nodes)
+    OTHER_DB_NODES = [ip for ip in ACTIVE_DB_NODES if ip != SERVER_IP]
+    print(f"[{ROLE}] - Active node list was updated: {OTHER_DB_NODES}")
+
+    return service_pb2.UpdateResponse(status="SUCCESS")
+
+
 def start_election():
     global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID, LAST_HEARTBEAT
 
