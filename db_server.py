@@ -31,7 +31,7 @@ ROLE = 'follower'
 CURRENT_TERM = 0
 VOTED_FOR = None
 LEADER_ID = None
-TIMEOUT = random.uniform(3.0, 5.0) if FIRST_RUN else random.uniform(1.5, 3.0)
+TIMEOUT = random.uniform(1.5, 3.0) if FIRST_RUN else random.uniform(3.0, 5.0)
 LAST_HEARTBEAT = time.time()
 
 SERVER_IP = get_private_ip()
