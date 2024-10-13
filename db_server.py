@@ -140,7 +140,6 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         if FIRST_RUN:
             FIRST_RUN = False
             TIMEOUT = random.uniform(1.5, 3.0)
-            request_database_sync()
         
         print(f"[{ROLE}] - Received heartbeat from leader {LEADER_ID}")
         return service_pb2.AppendEntriesResponse(success=True)
@@ -148,47 +147,19 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
     def Ping(self, request, context):
         global ROLE
         return service_pb2.PingResponse(role=ROLE, state="active")
-    
-    def SyncDatabase(self, request, context):
-        global ROLE
-        if ROLE == 'leader':
-            print(f"[{ROLE}] - Sync request received from follower")
-            try:
-                with open(DB_FILE, mode='r') as csv_file:
-                    data = csv_file.read()  # Leer todo el archivo CSV
-                return service_pb2.SyncResponse(database=data)
-            except Exception as e:
-                print(f"[{ROLE}] - Error sending database: {e}")
-                return service_pb2.SyncResponse(database="")
-        else:
-            print(f"[{ROLE}] - Cannot sync database, not the leader.")
-            return service_pb2.SyncResponse(database="")
-        
 
-    def request_database_sync():
-        global LEADER_ID, ROLE
-        if ROLE == 'follower' and LEADER_ID:  # Solo si soy un follower y hay líder
-            print(f"[{ROLE}] - Requesting database sync from leader {LEADER_ID}")
-            try:
-                channel = grpc.insecure_channel(f'{LEADER_ID}:50051')
-                stub = service_pb2_grpc.DatabaseServiceStub(channel)
-                sync_request = service_pb2.SyncRequest()
-                response = stub.SyncDatabase(sync_request)
-                if response.database:
-                    with open(DB_FILE, mode='w') as csv_file:
-                        csv_file.write(response.database)
-                    print(f"[{ROLE}] - Database successfully synced from leader.")
-                else:
-                    print(f"[{ROLE}] - Failed to sync database from leader.")
-            except Exception as e:
-                print(f"[{ROLE}] - Error syncing database from leader: {e}")
-
-
-
-#Degradar un líder a follower
+    def RequestDatabase(self, request, context):
+        """Función para que el follower solicite la base de datos al líder"""
+        try:
+            with open(DB_FILE, mode='r') as csv_file:
+                content = csv_file.read()
+            print(f"[{ROLE}] - Sending database content to follower")
+            return service_pb2.RequestDatabaseResponse(database_content=content)
+        except Exception as e:
+            print(f"[{ROLE}] - Error reading the database: {e}")
+            return service_pb2.RequestDatabaseResponse(database_content="ERROR")
 
     def DegradeToFollower(self, request, context):
-
         global ROLE
         print(f"[{ROLE}] - Degrading to follower by request.")
         ROLE = 'follower'
@@ -200,6 +171,7 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         OTHER_DB_NODES = [ip for ip in active_nodes if ip != SERVER_IP]
         print(f"[{ROLE}] - Updated active node list: {OTHER_DB_NODES}")
         return service_pb2.UpdateResponse(status="SUCCESS")
+
 
 def start_election():
     global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID, LAST_HEARTBEAT
