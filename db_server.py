@@ -33,7 +33,7 @@ ROLE = 'follower'
 CURRENT_TERM = 0
 VOTED_FOR = None
 LEADER_ID = None
-TIMEOUT = random.uniform(1.5, 3) if FIRST_RUN else random.uniform(3.5, 5.0)
+TIMEOUT = random.uniform(1.5, 3) if FIRST_RUN else random.uniform(5, 6.0)
 LAST_HEARTBEAT = time.time()
 
 SERVER_IP = get_private_ip()
@@ -149,16 +149,34 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         global ROLE
         return service_pb2.PingResponse(role=ROLE, state="active")
 
-    # Función para solicitar base de datos actual al líder
-    def RequestDatabase(self):
+    # Función para degradar a follower y replicar datos desde el líder
+    def DegradeToFollower(self, request, context):
+        global ROLE, LEADER_ID
+        print(f"[{ROLE}] - Degrading to follower by request.")
+        ROLE = 'follower'
+
+        # Si se degrada, solicitar replicación de datos del líder
         if LEADER_ID:
             try:
                 channel = grpc.insecure_channel(f'{LEADER_ID}:50051')
                 stub = service_pb2_grpc.DatabaseServiceStub(channel)
-                response = stub.ReplicateData(service_pb2.WriteRequest(data='REQUEST_DB'))
-                print(f"[{ROLE}] - Successfully requested database from leader {LEADER_ID}")
+                replicate_request = service_pb2.WriteRequest(data='REPLICATE')  # Solicitar datos actuales
+                response = stub.ReplicateData(replicate_request)
+                if response.status == "SUCCESS":
+                    print(f"[{ROLE}] - Successfully replicated data from leader {LEADER_ID}")
+                else:
+                    print(f"[{ROLE}] - Replication from leader {LEADER_ID} failed: {response.status}")
             except Exception as e:
-                print(f"[{ROLE}] - Error requesting database from leader {LEADER_ID}: {e}")
+                print(f"[{ROLE}] - Error replicating data from leader {LEADER_ID}: {e}")
+
+        return service_pb2.DegradeResponse(status="SUCCESS")
+    
+    def RequestDatabase(self, request, context):
+        print(f"[{ROLE}] - Sending database to new follower")
+        with open(DB_FILE, mode='r') as csv_file:
+            rows = [','.join(row) for row in csv.reader(csv_file)]
+            database_content = "\n".join(rows)
+        return service_pb2.DatabaseResponse(database=database_content)
 
     def UpdateActiveNodes(self, request, context):
         global OTHER_DB_NODES
@@ -174,39 +192,33 @@ def start_election():
         time.sleep(0.1)
 
         if ROLE == 'follower' and (time.time() - LAST_HEARTBEAT) > TIMEOUT:
-            # Primero verifica si hay un líder antes de comenzar la elección
-            if LEADER_ID:
-                print(f"[{ROLE}] - Leader detected, requesting database before election.")
-                db_service = DatabaseService()
-                db_service.RequestDatabase()
+            print(f"[{ROLE}] - Timeout expired, starting election")
+            ROLE = 'candidate'
+            CURRENT_TERM += 1
+            VOTED_FOR = None
+            LEADER_ID = None
+
+            vote_count = 1
+            for node_ip in OTHER_DB_NODES:
+                try:
+                    channel = grpc.insecure_channel(f'{node_ip}:50051')
+                    stub = service_pb2_grpc.DatabaseServiceStub(channel)
+                    vote_request = service_pb2.VoteRequest(term=CURRENT_TERM, candidate_id='self')
+                    vote_response = stub.RequestVote(vote_request)
+                    if vote_response.granted:
+                        vote_count += 1
+                except Exception as e:
+                    print(f"[{ROLE}] - Error contacting node {node_ip}")
+
+            if vote_count > (len(OTHER_DB_NODES) + 1) // 2:
+                print(f"[{ROLE}] - Became leader for term {CURRENT_TERM}")
+                ROLE = 'leader'
+                LEADER_ID = 'self'
+                start_heartbeats()
             else:
-                print(f"[{ROLE}] - Timeout expired, starting election")
-                ROLE = 'candidate'
-                CURRENT_TERM += 1
-                VOTED_FOR = None
-                LEADER_ID = None
-
-                vote_count = 1
-                for node_ip in OTHER_DB_NODES:
-                    try:
-                        channel = grpc.insecure_channel(f'{node_ip}:50051')
-                        stub = service_pb2_grpc.DatabaseServiceStub(channel)
-                        vote_request = service_pb2.VoteRequest(term=CURRENT_TERM, candidate_id='self')
-                        vote_response = stub.RequestVote(vote_request)
-                        if vote_response.granted:
-                            vote_count += 1
-                    except Exception as e:
-                        print(f"[{ROLE}] - Error contacting node {node_ip}")
-
-                if vote_count > (len(OTHER_DB_NODES) + 1) // 2:
-                    print(f"[{ROLE}] - Became leader for term {CURRENT_TERM}")
-                    ROLE = 'leader'
-                    LEADER_ID = 'self'
-                    start_heartbeats()
-                else:
-                    print(f"[{ROLE}] - Did not receive enough votes, remaining as follower")
-                    ROLE = 'follower'
-                    LAST_HEARTBEAT = time.time()
+                print(f"[{ROLE}] - Did not receive enough votes, remaining as follower")
+                ROLE = 'follower'
+                LAST_HEARTBEAT = time.time()
 
 def start_heartbeats():
     global LEADER_ID, ROLE
