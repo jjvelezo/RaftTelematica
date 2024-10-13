@@ -32,7 +32,7 @@ ROLE = 'follower'
 CURRENT_TERM = 0
 VOTED_FOR = None
 LEADER_ID = None
-TIMEOUT = random.uniform(5.0, 7.0) if FIRST_RUN else random.uniform(1.5, 3.0)
+TIMEOUT = random.uniform(8.0, 10.0) if FIRST_RUN else random.uniform(1.5, 3.0)
 LAST_HEARTBEAT = time.time()
 
 SERVER_IP = get_private_ip()
@@ -87,14 +87,16 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
 
     def ReplicateData(self, request, context):
         print(f"[{ROLE}] - Replication request received")
-        data = request.data.split(',')
-        print(f"[{ROLE}] - Data to replicate: {data}")
-
+        
+        # Leer el archivo completo para replicarlo
+        with open(DB_FILE, mode='r') as csv_file:
+            reader = csv.reader(csv_file)
+            rows = [','.join(row) for row in reader]
+            data = "\n".join(rows)
+        
         try:
-            with open(DB_FILE, mode='a') as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(data)
-            print(f"[{ROLE}] - Replication completed successfully")
+            # Enviar los datos completos al nodo
+            print(f"[{ROLE}] - Sending full database for replication")
             return service_pb2.WriteResponse(status="SUCCESS")
         except Exception as e:
             print(f"[{ROLE}] - Replication failed: {e}")
