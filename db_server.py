@@ -7,28 +7,25 @@ import os
 import time
 import random
 from threading import Thread
-import socket  # Para leer IP propia
+import socket  # Para leer ip propia
 
 # Verificar si es la primera vez que se inicia el follower
-FIRST_RUN = True  # Bandera para identificar el primer inicio
+FIRST_RUN = True
 
 DB_FILE = 'database.csv'
 
-# Verificar si el archivo ya existe
 if os.path.exists(DB_FILE):
     print(f"El archivo '{DB_FILE}' ya existe. Se eliminará para crear uno nuevo.")
-    os.remove(DB_FILE)  # Eliminar el archivo si existe
+    os.remove(DB_FILE)
 else:
     print(f"El archivo '{DB_FILE}' no existe. Creando uno nuevo.")
 
-# Crear un nuevo archivo CSV con la estructura especificada
 with open(DB_FILE, mode='w', newline='') as file:
     writer = csv.writer(file)
     writer.writerow(['id', 'name', 'email'])
 
 print(f"Archivo '{DB_FILE}' creado con la estructura: id, name, email.")
 
-# Obtener la IP privada del servidor
 def get_private_ip():
     return socket.gethostbyname(socket.gethostname())
 
@@ -36,8 +33,6 @@ ROLE = 'follower'
 CURRENT_TERM = 0
 VOTED_FOR = None
 LEADER_ID = None
-
-# Timeout largo en el primer inicio
 TIMEOUT = random.uniform(3.0, 5.0) if FIRST_RUN else random.uniform(1.5, 3.0)
 LAST_HEARTBEAT = time.time()
 
@@ -140,35 +135,33 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
 
     def AppendEntries(self, request, context):
         global ROLE, LEADER_ID, TIMEOUT, LAST_HEARTBEAT, FIRST_RUN
-        incoming_leader_id = request.leader_id
-        
-        # Si un líder ya está presente, el nodo se convierte en follower si recibe un heartbeat de otro líder
-        if ROLE == 'leader' and incoming_leader_id != 'self':
-            print(f"[{ROLE}] - Another leader detected ({incoming_leader_id}). Stepping down to follower.")
-            ROLE = 'follower'
-            LEADER_ID = incoming_leader_id
-        
-        LEADER_ID = incoming_leader_id
-        LAST_HEARTBEAT = time.time()  # Actualizar el tiempo del último heartbeat recibido
-        
-        # Restablecer timeout a los valores normales después del primer heartbeat
+        LEADER_ID = request.leader_id
+        LAST_HEARTBEAT = time.time()
+
         if FIRST_RUN:
             FIRST_RUN = False
             TIMEOUT = random.uniform(1.5, 3.0)
         
         print(f"[{ROLE}] - Received heartbeat from leader {LEADER_ID}")
-        return service_pb2.AppendEntriesResponse(success=True, leader_id=LEADER_ID)
+        return service_pb2.AppendEntriesResponse(success=True)
 
     def Ping(self, request, context):
         global ROLE
         return service_pb2.PingResponse(role=ROLE, state="active")
 
-    # Implementación de UpdateActiveNodes
+    def DegradeToFollower(self, request, context):
+        """Función para degradar un líder a follower"""
+        global ROLE
+        print(f"[{ROLE}] - Degrading to follower by request.")
+        ROLE = 'follower'
+        return service_pb2.DegradeResponse(status="SUCCESS")
+
     def UpdateActiveNodes(self, request, context):
+        """Actualizar la lista de nodos activos desde el proxy."""
         global OTHER_DB_NODES
         active_nodes = list(request.active_nodes)
-        OTHER_DB_NODES = [ip for ip in active_nodes if ip != SERVER_IP]  # Actualizar los nodos activos, excluyendo el propio
-        print(f"[{ROLE}] - Active nodes updated: {OTHER_DB_NODES}")
+        OTHER_DB_NODES = [ip for ip in active_nodes if ip != SERVER_IP]
+        print(f"[{ROLE}] - Updated active node list: {OTHER_DB_NODES}")
         return service_pb2.UpdateResponse(status="SUCCESS")
 
 def start_election():
@@ -177,7 +170,6 @@ def start_election():
     while True:
         time.sleep(0.1)
 
-        # Verificar si el timeout ha vencido
         if ROLE == 'follower' and (time.time() - LAST_HEARTBEAT) > TIMEOUT:
             print(f"[{ROLE}] - Timeout expired, starting election")
             ROLE = 'candidate'
@@ -185,7 +177,7 @@ def start_election():
             VOTED_FOR = None
             LEADER_ID = None
 
-            vote_count = 1  # Se vota a sí mismo
+            vote_count = 1
             for node_ip in OTHER_DB_NODES:
                 try:
                     channel = grpc.insecure_channel(f'{node_ip}:50051')
@@ -208,7 +200,7 @@ def start_election():
                 LAST_HEARTBEAT = time.time()
 
 def start_heartbeats():
-    global LEADER_ID, ROLE, CURRENT_TERM
+    global LEADER_ID, ROLE
 
     while ROLE == 'leader':
         print(f"[{ROLE}] - Sending heartbeats to followers")
@@ -217,15 +209,7 @@ def start_heartbeats():
                 channel = grpc.insecure_channel(f'{node_ip}:50051')
                 stub = service_pb2_grpc.DatabaseServiceStub(channel)
                 heartbeat_request = service_pb2.AppendEntriesRequest(leader_id='self')
-                response = stub.AppendEntries(heartbeat_request)
-
-                # Verificar si el líder en el otro nodo es diferente (detectar colisión de líderes)
-                if response.leader_id != 'self':
-                    print(f"[{ROLE}] - Detected another leader ({response.leader_id}). Stepping down.")
-                    ROLE = 'follower'
-                    LEADER_ID = response.leader_id
-                    return  # Salir de la función de heartbeat y volver a follower
-                
+                stub.AppendEntries(heartbeat_request)
                 print(f"[{ROLE}] - Heartbeat successfully sent to node {node_ip}")
             except grpc.RpcError as e:
                 print(f"[{ROLE}] - Error sending heartbeat to node {node_ip}: {e}")

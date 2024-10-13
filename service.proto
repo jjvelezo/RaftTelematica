@@ -4,19 +4,19 @@ package database;
 
 // Mensajes para leer y escribir datos
 message ReadRequest {
-  string query = 1; // Por ejemplo, puede ser una consulta tipo SQL-like
+  string query = 1;
 }
 
 message ReadResponse {
-  string result = 1; // Resultado de la lectura
+  string result = 1;
 }
 
 message WriteRequest {
-  string data = 1; // Datos a escribir en formato CSV-like
+  string data = 1;
 }
 
 message WriteResponse {
-  string status = 1; // Estado de la escritura
+  string status = 1;
 }
 
 // Mensajes para el algoritmo Raft
@@ -31,23 +31,28 @@ message VoteResponse {
 
 message AppendEntriesRequest {
   string leader_id = 1;
-  repeated string entries = 2; // Nuevas entradas a replicar
 }
 
 message AppendEntriesResponse {
   bool success = 1;
-  string leader_id = 2;  // ID del líder que envió el heartbeat
+}
+
+// Mensaje para degradar a follower
+message DegradeRequest {}
+
+message DegradeResponse {
+  string status = 1;
 }
 
 // Mensaje para el Ping
 message PingRequest {
-  string message = 1; // Solo para probar la conexión
+  string message = 1;
 }
 
 message PingResponse {
-  string role = 1;  // Follower, leader, etc.
-  string state = 2; // Active o Inactive
-  repeated string active_nodes = 3;  // Lista de nodos activos
+  string role = 1;
+  string state = 2;
+  repeated string active_nodes = 3;
 }
 
 message UpdateRequest {
@@ -64,7 +69,8 @@ service DatabaseService {
   rpc WriteData(WriteRequest) returns (WriteResponse);
   rpc RequestVote(VoteRequest) returns (VoteResponse);
   rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
-  rpc Ping(PingRequest) returns (PingResponse);  // Agregar el nuevo servicio
+  rpc Ping(PingRequest) returns (PingResponse);
   rpc UpdateActiveNodes(UpdateRequest) returns (UpdateResponse);
-  rpc ReplicateData(WriteRequest) returns (WriteResponse); // Agregar el método de replicación
+  rpc DegradeToFollower(DegradeRequest) returns (DegradeResponse);
+  rpc ReplicateData(WriteRequest) returns (WriteResponse);
 }

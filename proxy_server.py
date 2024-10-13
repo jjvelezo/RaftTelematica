@@ -16,7 +16,6 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
     def __init__(self):
         self.db_channels = {}
         for server in DB_SERVERS:
-            # Crear el canal con timeout para mantener la conexión viva
             channel = grpc.insecure_channel(f'{server["host"]}:{server["port"]}', options=[
                 ('grpc.keepalive_timeout_ms', 1000)  # Timeout de 1 segundo
             ])
@@ -33,64 +32,68 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
         """Inicia un ciclo que realiza pings periódicos a los db_servers."""
         def ping_servers():
             while True:
+                leaders = []
                 for ip, stub in self.db_channels.items():
                     try:
-                        # Enviar el ping y recibir el estado
                         response = stub.Ping(service_pb2.PingRequest(message="ping"))
                         if self.server_status[ip]["state"] != "active" or self.server_status[ip]["role"] != response.role:
-                            # Solo mostrar si hay un cambio en el estado o rol del nodo
                             print(f"Node {ip} is now active with role {response.role}")
                         self.server_status[ip] = {"role": response.role, "state": response.state}
-                    
-                        # Si encontramos un nuevo líder, actualizar
+
                         if response.role == "leader" and self.server_status[ip]["state"] == "active":
+                            leaders.append(ip)
                             if self.current_leader != ip:
                                 self.current_leader = ip
                                 print(f"\nNew leader identified: {self.current_leader}")
-                                self.send_active_list_to_all()  # Enviar lista de nodos activos
 
                     except grpc.RpcError as e:
                         if self.server_status[ip]["state"] != "inactive":
-                            # Solo mostrar el error si el nodo no estaba ya marcado como inactivo
                             if e.code() == grpc.StatusCode.UNAVAILABLE:
                                 print(f"Node {ip} is unavailable (Connection refused)")
                             else:
                                 print(f"Error contacting node {ip}: {e.details() if e.details() else 'Unknown error'}")
-                            # Si falla el ping, marcar como inactivo
                             self.server_status[ip] = {"role": "unknown", "state": "inactive"}
-                    
+
+                # Si hay más de un líder, degradar a los demás líderes
+                if len(leaders) > 1:
+                    print(f"\nMultiple leaders detected: {leaders}. Degrading extra leaders to followers.")
+                    for ip in leaders:
+                        if ip != self.current_leader:  # Degradar los demás líderes
+                            self.degrade_to_follower(ip)
+
                 # Imprimir el estado actual de los servidores
                 print("\nEstado actual de los servidores:")
                 for ip, status in self.server_status.items():
                     print(f"Servidor {ip} - Rol: {status['role']}, Estado: {status['state']}")
-            
-                # Enviar la lista de nodos activos al final de cada ciclo de ping
-                self.send_active_list_to_all()
 
-                # Esperar X segundos antes del próximo ping
+                self.send_active_list_to_all()
                 time.sleep(5)
 
-        # Ejecutar el ping en un hilo separado
         ping_thread = threading.Thread(target=ping_servers)
-        ping_thread.daemon = True  # El hilo se cerrará cuando el programa principal termine
+        ping_thread.daemon = True
         ping_thread.start()
+
+    def degrade_to_follower(self, ip):
+        """Solicitar que un líder se degrade a follower."""
+        print(f"Degrading leader {ip} to follower.")
+        try:
+            stub = self.db_channels[ip]
+            stub.DegradeToFollower(service_pb2.DegradeRequest())  # Enviar solicitud de degradación
+        except grpc.RpcError as e:
+            print(f"Error contacting leader {ip} for degradation: {e}")
 
     def send_active_list_to_all(self):
         """Envía la lista de instancias activas a todos los nodos activos."""
         active_instances = [ip for ip, status in self.server_status.items() if status["state"] == "active"]
 
         for ip, stub in self.db_channels.items():
-            # Verificamos si el nodo está activo antes de enviar la lista
             if self.server_status[ip]["state"] == "active":
                 try:
-                    # Enviamos la lista de instancias activas
                     request = service_pb2.UpdateRequest(active_nodes=active_instances)
                     stub.UpdateActiveNodes(request)
                     print(f"Sent active node list to {ip}: {active_instances}")
                 except grpc.RpcError as e:
-                    # Capturamos el error solo si no es repetido
                     print(f"Error sending active node list to {ip}: {e.details() if e.details() else 'Unknown error'}")
-                    # Marcar como inactivo en caso de error
                     self.server_status[ip]["state"] = "inactive"
 
     def find_leader(self):
@@ -105,7 +108,6 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
         self.current_leader = None
 
     def ReadData(self, request, context):
-        # Seleccionar un follower aleatorio si hay un lider identificado
         followers = [ip for ip, status in self.server_status.items() if status["role"] == "follower" and status["state"] == "active"]
         if followers:
             follower_stub = random.choice([self.db_channels[ip] for ip in followers])
@@ -129,7 +131,6 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
                 return response
             except grpc.RpcError as e:
                 print(f"Error writing data to leader: {e}")
-                # Si hay un error, se intenta encontrar un nuevo líder antes de responder.
                 self.find_leader()
                 return service_pb2.WriteResponse(status="ERROR: Unable to write data.")
         else:
@@ -138,7 +139,7 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     service_pb2_grpc.add_DatabaseServiceServicer_to_server(ProxyService(), server)
-    server.add_insecure_port('[::]:50052')  # Puerto del proxy
+    server.add_insecure_port('[::]:50052')
     server.start()
     print("Proxy server started on port 50052.")
     server.wait_for_termination()
