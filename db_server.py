@@ -137,8 +137,8 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
             return service_pb2.VoteResponse(granted=False)
 
     def AppendEntries(self, request, context):
-    global ROLE, LEADER_ID, TIMEOUT, LAST_HEARTBEAT, FIRST_RUN
-    incoming_leader_id = request.leader_id
+        global ROLE, LEADER_ID, TIMEOUT, LAST_HEARTBEAT, FIRST_RUN
+        incoming_leader_id = request.leader_id
 
     # Si un líder ya está presente, el nodo se convierte en follower si recibe un heartbeat de otro líder
     if ROLE == 'leader' and incoming_leader_id != 'self':
