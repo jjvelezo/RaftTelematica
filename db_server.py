@@ -86,18 +86,19 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
             return service_pb2.WriteResponse(status="ERROR: Cannot write to follower")
 
     def ReplicateData(self, request, context):
+        global ROLE
         print(f"[{ROLE}] - Replication request received")
-        
-        # Leer el archivo completo para replicarlo
-        with open(DB_FILE, mode='r') as csv_file:
-            reader = csv.reader(csv_file)
-            rows = [','.join(row) for row in reader]
-            data = "\n".join(rows)
-        
+
         try:
+            # Leer el archivo completo para replicarlo
+            with open(DB_FILE, mode='r') as csv_file:
+                reader = csv.reader(csv_file)
+                rows = [','.join(row) for row in reader]
+                data = "\n".join(rows)
+
             # Enviar los datos completos al nodo
             print(f"[{ROLE}] - Sending full database for replication")
-            return service_pb2.WriteResponse(status="SUCCESS")
+            return service_pb2.WriteResponse(status=data)  # Enviamos la base de datos completa como respuesta en el status
         except Exception as e:
             print(f"[{ROLE}] - Replication failed: {e}")
             return service_pb2.WriteResponse(status=f"ERROR: {e}")

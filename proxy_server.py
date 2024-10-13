@@ -151,14 +151,31 @@ class ProxyService(service_pb2_grpc.DatabaseServiceServicer):
 
                 # Pedir al líder que replique sus datos al nuevo nodo
                 print(f"Requesting leader {self.current_leader} to replicate data to {new_node_ip}")
-                request = service_pb2.WriteRequest(data="")  # Este WriteRequest puede incluir lógica adicional si es necesario
+                request = service_pb2.WriteRequest(data="")
                 response = leader_stub.ReplicateData(request)
-                if response.status == "SUCCESS":
-                    print(f"Data successfully replicated to {new_node_ip}")
-                else:
+
+                if response.status.startswith("ERROR"):
                     print(f"Failed to replicate data to {new_node_ip}: {response.status}")
+                else:
+                    # Si la replicación es exitosa, escribir los datos en el nuevo nodo
+                    print(f"Replication data: {response.status}")
+                    self.write_data_to_follower(new_node_ip, response.status)  # Escribir los datos en el nuevo nodo
             except grpc.RpcError as e:
                 print(f"Error contacting leader {self.current_leader} for data replication: {e.details()}")
+
+    def write_data_to_follower(self, new_node_ip, data):
+        try:
+            # Abrir el canal gRPC con el nuevo nodo
+            follower_stub = self.db_channels[new_node_ip]
+            write_request = service_pb2.WriteRequest(data=data)
+            response = follower_stub.WriteData(write_request)
+            if response.status == "SUCCESS":
+                print(f"Data successfully written to follower {new_node_ip}")
+            else:
+                print(f"Failed to write data to follower {new_node_ip}: {response.status}")
+        except grpc.RpcError as e:
+            print(f"Error writing data to follower {new_node_ip}: {e.details()}")
+
 
 
 def serve():
