@@ -7,21 +7,19 @@ import os
 import time
 import random
 from threading import Thread
-import socket  # Para leer IP propia
+import socket
 
 # Verificar si es la primera vez que se inicia el follower
-FIRST_RUN = True  # Bandera para identificar el primer inicio
+FIRST_RUN = True
 
 DB_FILE = 'database.csv'
 
-# Verificar si el archivo ya existe
 if os.path.exists(DB_FILE):
     print(f"El archivo '{DB_FILE}' ya existe. Se eliminará para crear uno nuevo.")
-    os.remove(DB_FILE)  # Eliminar el archivo si existe
+    os.remove(DB_FILE)
 else:
     print(f"El archivo '{DB_FILE}' no existe. Creando uno nuevo.")
 
-# Crear un nuevo archivo CSV con la estructura especificada
 with open(DB_FILE, mode='w', newline='') as file:
     writer = csv.writer(file)
     writer.writerow(['id', 'name', 'email'])
@@ -163,11 +161,10 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         global ROLE
         return service_pb2.PingResponse(role=ROLE, state="active")
 
-    # Implementación de UpdateActiveNodes
     def UpdateActiveNodes(self, request, context):
         global OTHER_DB_NODES
         active_nodes = list(request.active_nodes)
-        OTHER_DB_NODES = [ip for ip in active_nodes if ip != SERVER_IP]  # Actualizar los nodos activos, excluyendo el propio
+        OTHER_DB_NODES = [ip for ip in active_nodes if ip != SERVER_IP]
         print(f"[{ROLE}] - Active nodes updated: {OTHER_DB_NODES}")
         return service_pb2.UpdateResponse(status="SUCCESS")
 
