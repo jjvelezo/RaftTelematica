@@ -86,19 +86,32 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
             return service_pb2.WriteResponse(status="ERROR: Cannot write to follower")
 
     def ReplicateData(self, request, context):
+        global ROLE
         print(f"[{ROLE}] - Replication request received")
-        data = request.data.split(',')
-        print(f"[{ROLE}] - Data to replicate: {data}")
 
-        try:
-            with open(DB_FILE, mode='a') as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(data)
-            print(f"[{ROLE}] - Replication completed successfully")
-            return service_pb2.WriteResponse(status="SUCCESS")
-        except Exception as e:
-            print(f"[{ROLE}] - Replication failed: {e}")
-            return service_pb2.WriteResponse(status=f"ERROR: {e}")
+        if request.data == "replicate_full":
+            try:
+                # Leer el archivo CSV completo y enviarlo al nodo
+                with open(DB_FILE, mode='r') as csv_file:
+                    reader = csv.reader(csv_file)
+                    rows = [','.join(row) for row in reader]
+                    full_data = "\n".join(rows)
+                
+                # Escribir los datos en el nodo de destino
+                with open(DB_FILE, mode='w', newline='') as csv_file:
+                    writer = csv.writer(csv_file)
+                    for row in rows:
+                        writer.writerow(row.split(','))
+
+                print(f"[{ROLE}] - Full replication completed successfully")
+                return service_pb2.WriteResponse(status="SUCCESS")
+            except Exception as e:
+                print(f"[{ROLE}] - Replication failed: {e}")
+                return service_pb2.WriteResponse(status=f"ERROR: {e}")
+        else:
+            print(f"[{ROLE}] - No full replication requested")
+            return service_pb2.WriteResponse(status="ERROR: No replication data provided")
+
 
     def replicate_to_followers(self, data):
         for follower_ip in OTHER_DB_NODES:
