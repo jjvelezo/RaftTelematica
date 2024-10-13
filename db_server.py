@@ -36,7 +36,7 @@ ROLE = 'follower'
 CURRENT_TERM = 0
 VOTED_FOR = None
 LEADER_ID = None
-TIMEOUT = random.uniform(0.15, 0.3)
+TIMEOUT = random.uniform(2.5, 4.0)
 LAST_HEARTBEAT = time.time()
 
 #OTHER_DB_NODES = ['10.0.2.100', '10.0.2.164'] #Example
@@ -152,7 +152,7 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         global ROLE, LEADER_ID, TIMEOUT, LAST_HEARTBEAT
         LEADER_ID = request.leader_id
         LAST_HEARTBEAT = time.time()  # Actualizar el tiempo del ultimo heartbeat recibido
-        TIMEOUT = random.uniform(1.5, 3.0)  # Restablecer el timeout aleatorio
+        TIMEOUT = random.uniform(0.15, 0.3)  # Restablecer el timeout aleatorio
         #print
         print(f"[{ROLE}] - Received heartbeat from leader {LEADER_ID}")
         return service_pb2.AppendEntriesResponse(success=True)
