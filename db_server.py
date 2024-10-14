@@ -37,6 +37,7 @@ LAST_HEARTBEAT = time.time()
 
 SERVER_IP = get_private_ip()
 
+# Lista de nodos, incluyendo la IP del servidor
 ALL_DB_NODES = ['10.0.2.250', '10.0.2.162', '10.0.2.234']
 OTHER_DB_NODES = [ip for ip in ALL_DB_NODES if ip != SERVER_IP]
 print(OTHER_DB_NODES)
@@ -70,7 +71,7 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
                         print(f"[{ROLE}] - Write operation failed: ID already exists")
                         return service_pb2.WriteResponse(status="ERROR: ID ya existente")
 
-
+            # Si el ID no existe, agregar al CSV
             with open(DB_FILE, mode='a') as csv_file:
                 writer = csv.writer(csv_file)
                 writer.writerow(data)
@@ -120,6 +121,7 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
         candidate_id = request.candidate_id
 
         try:
+            # Votar si el termino del candidato es mayor al actual y aun no ha votado en este termino
             if term > CURRENT_TERM or (term == CURRENT_TERM and VOTED_FOR is None):
                 VOTED_FOR = candidate_id
                 CURRENT_TERM = term
@@ -135,40 +137,75 @@ class DatabaseService(service_pb2_grpc.DatabaseServiceServicer):
     def AppendEntries(self, request, context):
         global ROLE, LEADER_ID, TIMEOUT, LAST_HEARTBEAT, FIRST_RUN
         LEADER_ID = request.leader_id
-        LAST_HEARTBEAT = time.time()
-
+        LAST_HEARTBEAT = time.time()  # Actualizar el tiempo del ultimo heartbeat recibido
+        TIMEOUT = random.uniform(1.5, 3.0)
+        
         if FIRST_RUN:
             FIRST_RUN = False
             TIMEOUT = random.uniform(1.5, 3.0)
         
         print(f"[{ROLE}] - Received heartbeat from leader {LEADER_ID}")
         return service_pb2.AppendEntriesResponse(success=True)
-
+    
     def Ping(self, request, context):
         global ROLE
         return service_pb2.PingResponse(role=ROLE, state="active")
-
-#Degradar un líder a follower
+    
+    #Degradar un lider a follower
     def DegradeToFollower(self, request, context):
-
         global ROLE
         print(f"[{ROLE}] - Degrading to follower by request.")
         ROLE = 'follower'
         return service_pb2.DegradeResponse(status="SUCCESS")
-
+    
+    # Metodods para hablar con el Proxy
+    
     def UpdateActiveNodes(self, request, context):
         global OTHER_DB_NODES
-        active_nodes = list(request.active_nodes)
-        OTHER_DB_NODES = [ip for ip in active_nodes if ip != SERVER_IP]
-        print(f"[{ROLE}] - Updated active node list: {OTHER_DB_NODES}")
+        print(f"[{ROLE}] - Received active node list: {request.active_nodes}")
+
+        # Actualizar la lista de nodos activos
+        ACTIVE_DB_NODES = list(request.active_nodes)
+        OTHER_DB_NODES = [ip for ip in ACTIVE_DB_NODES if ip != SERVER_IP]
+        print(f"[{ROLE}] - Active node list was updated: {OTHER_DB_NODES}")
+
         return service_pb2.UpdateResponse(status="SUCCESS")
+    
+    def request_active_nodes_from_proxy(proxy_ip):
+        try:
+            channel = grpc.insecure_channel(f'{proxy_ip}:50051')  # Conectar al proxy
+            stub = service_pb2_grpc.DatabaseServiceStub(channel)
+            request = service_pb2.PingRequest()
+            response = stub.Ping(request)
+            print(f"Received active nodes from proxy: {response.active_nodes}")
+            ACTIVE_DB_NODES = list(response.active_nodes)  # Convertirlo a lista
+            OTHER_DB_NODES = [ip for ip in ACTIVE_DB_NODES if ip != SERVER_IP]
+            return OTHER_DB_NODES 
+        except Exception as e:
+            print(f"Error fetching active nodes from proxy: {e}")
+            return []
+        
+    # Funciones para Actualizar el Database.csv
+        
+    def RequestDatabase(self, request, context):
+        try:
+            with open(DB_FILE, mode='r') as csv_file:
+                reader = csv.reader(csv_file)
+                rows = [','.join(row) for row in reader]
+                result = "\n".join(rows)
+            return service_pb2.DatabaseResponse(database=result)
+        except Exception as e:
+            print(f"Error al leer el archivo CSV: {e}")
+            return service_pb2.DatabaseResponse(database="")
+        
 
 def start_election():
     global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID, LAST_HEARTBEAT
 
     while True:
-        time.sleep(0.1)
+        time.sleep(0.1)  # El lider sigue activo?
 
+        # Mirar si el tiempo desde el ultimo heartbeat supera el timeout
         if ROLE == 'follower' and (time.time() - LAST_HEARTBEAT) > TIMEOUT:
             print(f"[{ROLE}] - Timeout expired, starting election")
             ROLE = 'candidate'
@@ -176,6 +213,7 @@ def start_election():
             VOTED_FOR = None
             LEADER_ID = None
 
+            # Pedir votos a los otros nodos y votarse a si mismo
             vote_count = 1
             for node_ip in OTHER_DB_NODES:
                 try:
@@ -186,8 +224,10 @@ def start_election():
                     if vote_response.granted:
                         vote_count += 1
                 except Exception as e:
+                    #print(f"[{ROLE}] - Error contacting node {node_ip}: {e}")
                     print(f"[{ROLE}] - Error contacting node {node_ip}")
 
+            # Si consigue la mayoria de votos se convierte en lider
             if vote_count > (len(OTHER_DB_NODES) + 1) // 2:
                 print(f"[{ROLE}] - Became leader for term {CURRENT_TERM}")
                 ROLE = 'leader'
@@ -211,9 +251,57 @@ def start_heartbeats():
                 stub.AppendEntries(heartbeat_request)
                 print(f"[{ROLE}] - Heartbeat successfully sent to node {node_ip}")
             except grpc.RpcError as e:
-                print(f"[{ROLE}] - Error sending heartbeat to node {node_ip}: {e}")
+                print(f"[{ROLE}] - Error sending heartbeat to node {node_ip}")
+                status_code = e.code()
+                if status_code == grpc.StatusCode.UNAVAILABLE:
+                    print(f"[{ROLE}] - Node {node_ip} is unreachable (Status: UNAVAILABLE)")
+                elif status_code == grpc.StatusCode.CANCELLED:
+                    print(f"[{ROLE}] - Heartbeat to node {node_ip} was cancelled (Status: CANCELLED)")
+                else:
+                    print(f"[{ROLE}] - Unexpected error sending heartbeat to node {node_ip}")
         
         time.sleep(1)
+        
+def fetch_leader_and_sync():
+    global ROLE, LEADER_ID
+
+    # Hacer ping a cada nodo para determinar quién es el lider
+    for node_ip in OTHER_DB_NODES:
+        try:
+            channel = grpc.insecure_channel(f'{node_ip}:50051')
+            stub = service_pb2_grpc.DatabaseServiceStub(channel)
+            ping_request = service_pb2.PingRequest()
+            response = stub.Ping(ping_request) 
+
+            # Verificar si el nodo es el lider
+            if response.role == 'leader':
+                LEADER_ID = node_ip
+                print(f"[{ROLE}] - Found leader: {LEADER_ID}")
+                break  
+
+        except grpc.RpcError as e:
+            print(f"[{ROLE}] - Error contacting node {node_ip}")
+
+    if LEADER_ID is not None:
+        # Si encontramos al lider se  sincroniza el CSV si es necesario
+        sync_with_leader(LEADER_ID)
+
+def sync_with_leader(leader_ip):
+    """Sincronizar con el líder para obtener datos actualizados."""
+    try:
+        channel = grpc.insecure_channel(f'{leader_ip}:50051')
+        stub = service_pb2_grpc.DatabaseServiceStub(channel)
+        request = service_pb2.DatabaseRequest()  
+        response = stub.RequestDatabase(request)
+
+        # Procesar la respuesta del lider
+        if response.database:
+            with open(DB_FILE, mode='w') as csv_file:
+                csv_file.write(response.database)
+            print(f"[{ROLE}] - Database synchronized with leader {leader_ip}")
+
+    except grpc.RpcError as e:
+        print(f"[{ROLE}] - Error syncing with leader {leader_ip}")
 
 def serve():
     global ROLE, CURRENT_TERM, VOTED_FOR, LEADER_ID
@@ -228,10 +316,11 @@ def serve():
     server.start()
     print(f"Database server ({ROLE}) started on port 50051.")
     
+    fetch_leader_and_sync()
+    
     Thread(target=start_election).start()
 
     server.wait_for_termination()
 
 if __name__ == '__main__':
     serve()
-    
